@@ -1,8 +1,8 @@
 """Slice selector: slices.json (DATA) -> ordered train/trace/cell steps of ONE plan. Written, NOT run.
 
 Item keys: kind (train | trace | cell), N, failure_probability (exact ==, no tolerance),
-seed_tuple_indices (position in suite['seed_tuples']), policies, exclude_earlier,
-optional_policy_absent, cap_minutes | cap_minutes_param. A selector that names a cell which is not in body['cells'] (absent by
+seed_tuple_indices (position in suite['seed_tuples']), policies, exclude_earlier, optional_policy_absent,
+cap_minutes | cap_minutes_param. A selector that names a cell which is not in body['cells'] (absent by
 design) or that selects nothing is REFUSED. check_partition asserts that the union of all slices equals
 body['cells'] (and the planned trainings) with nothing twice.
 
