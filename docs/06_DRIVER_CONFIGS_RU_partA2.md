@@ -39,7 +39,7 @@
 По `result["outcome"]`:
 - `"capped"`, `"wall_reached"` -> `EXIT_CAPPED` (3);
 - `"ok"`, `"skipped_verified"`, `"ok_unverified_by_request"` -> `EXIT_OK` (0);
-- любой другой, включая неизвестный -> `EXIT_FAILED` (2). Docstring: «аn unknown outcome is never green».
+- любой другой, включая неизвестный -> `EXIT_FAILED` (2). Docstring: «an unknown outcome is never green».
 
 Значит, `failed`, `invalid_completion` и `unverified` дают 2. Ключ `outcome` обязателен: при его отсутствии `KeyError` (вывод из чтения).
 
