@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "orbit": {
+    "n": 132, "planes": 12, "earth_radius_km": 6371.0, "altitude_km": 1050.0,
+    "inclination_deg": 53.0, "eccentricity": 0.0, "mu_km3_s2": 398600.4418,
+    "walker_f": 1, "phase_mode": "independent_plane_offsets", "epoch_s": 0.0,
+    "range_km": 3500.0, "earth_los": true
+  },
+  "data": {
+    "train_seeds": [101, 102, 103, 104, 105, 106, 107, 108],
+    "val_seeds": [201, 202], "test_seeds": [301, 302],
+    "snapshots_per_trajectory": 24, "step_s": 120.0, "start_s": 0.0, "mask_diagonal": true
+  },
+  "model": {
+    "gcn_width": 32, "dense_width": 64, "gcn_bias": false, "dense_bias": true,
+    "features": "adjacency_spliced_two_hop", "feature_version": 1,
+    "orientation": "destination_candidate"
+  },
+  "train": {
+    "seed": 17, "epochs": 100, "batch_size": 4, "learning_rate": 0.001,
+    "beta": 0.00001, "patience": 15, "device": "cpu", "deterministic": true,
+    "threads": 1, "optimizer": "Adam", "adam_betas": [0.9, 0.999], "adam_eps": 1e-8
+  }
+}

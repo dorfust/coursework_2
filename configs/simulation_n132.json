@@ -1,0 +1,15 @@
+{
+  "schema": "ssn-simulation-config-v1",
+  "orbit": {
+    "n": 132, "planes": 12, "earth_radius_km": 6371.0, "altitude_km": 1050.0,
+    "inclination_deg": 53.0, "eccentricity": 0.0, "mu_km3_s2": 398600.4418,
+    "walker_f": 1, "phase_mode": "independent_plane_offsets", "epoch_s": 0.0,
+    "range_km": 3500.0, "earth_los": true
+  },
+  "phase_seed": 401, "traffic_seed": 501, "failure_seed": 601,
+  "tick_s": 0.1, "traffic_end_s": 600.0, "observation_end_s": 900.0,
+  "arrival_interval_s": 1.0, "packet_bytes": 18000, "ttl_s": 300.0,
+  "buffer_bytes": 16000000, "rate_bytes_s": 12500.0,
+  "light_speed_km_s": 299792.458, "failure_probability": 0.04,
+  "additional_retries": 3, "torch_threads": 1, "audit_each_tick": true
+}
