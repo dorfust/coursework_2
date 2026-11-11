@@ -1,0 +1,8 @@
+# Derived from the original project .gitignore. Run outputs (plans, runs, logs, results) are written where the --out options point; docs/08_VSCODE_SETUP_RU.md suggests a directory outside this folder, or outputs/ below.
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+outputs/

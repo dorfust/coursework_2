@@ -10,10 +10,15 @@
 
 Метки в описании: «в коде написано» — пересказ или цитата кода; «вывод из чтения» — заключение без запуска; «ручной расчёт» — арифметика, показанная в тексте.
 
+Редакция 2 добавила файлы установки (`pyproject.toml`, `.gitignore`, `.vscode/`, `docs/08_VSCODE_SETUP_RU.md`, `docs/ERRATA_RU_part4.md`); утверждения этого раздела о числе файлов и о проверке описания относятся к редакции 1 (поправки — `docs/ERRATA_RU_part4.md`, разделы G и H).
+
 ## 3. Состав папки
 
 ```
 README.md                      этот файл
+pyproject.toml                 метаданные проекта (редакция 2; составлены из исходных метаданных)
+.gitignore                     игнорируемые пути (редакция 2)
+.vscode/                       настройки VS Code: settings.json, extensions.json, launch.json (редакция 2)
 src/ssn_hops/                  пакет, 24 файла
   __init__.py                  docstring и __version__ = "0.1.0"
   __main__.py                  вход `python -m ssn_hops`, передаёт управление в cli
@@ -53,14 +58,14 @@ configs/                       4 JSON
   n132.json                    шаблон конфигурации обучения
   simulation_n132.json         шаблон конфигурации симуляции
   slices_m1b_cgr.json          расписание срезов для этой серии
-docs/                          описание на русском (группы 01-07; ERRATA_RU.md, ERRATA_RU_part2.md, ERRATA_RU_part3.md)
+docs/                          описание на русском (группы 01-07; 08_VSCODE_SETUP_RU.md; ERRATA_RU.md, ERRATA_RU_part2.md, ERRATA_RU_part3.md, ERRATA_RU_part4.md)
 ```
 
 ## 4. Что НЕ входит в папку
 
 - Тесты (каталог `tests/`, эталонные реализации): в строках кода упомянуты, например, `tests/reference/contacts_ref.py`; в экспорте их нет, поэтому проверок, на которые ссылаются комментарии кода, здесь нет: в `contacts.py` комментарий называет эталонную функцию из `tests/reference/contacts_ref.py`, в `geometry.py` комментарий называет довод о побитовом равенстве ветвей в документе, не входящем в экспорт (пересказ, не цитата).
 - Инструменты анализа и построения отчётов, кроме `experiment_plots.py`.
-- Файл метаданных проекта: **нет ни `pyproject.toml`, ни файла requirements**; пакет не устанавливается, а подключается через `PYTHONPATH` (раздел 6).
+- Файл метаданных проекта: исходный файл метаданных в папку не входит; `pyproject.toml` редакции 2 составлен из него заново (имя, версия, диапазоны зависимостей и скрипт те же; убраны дополнение `test` и раздел `pytest`; добавлено дополнение `plot`; подробности — `docs/08_VSCODE_SETUP_RU.md`, раздел 3.1); **файла requirements нет**; пакет можно установить командой `pip install -e .` (не проверялось запуском) либо подключить через `PYTHONPATH` (раздел 6).
 - Другие файлы срезов и серий: код называет в строках `slices.json`, `suite_m1`, `suite_m1_nocgr` (не входит в экспорт); готового `plan.json` тоже нет.
 - Документы, которые код называет только строками (не входит в экспорт): `SIMULATION_PROTOCOL.md`, `R3_FEATURES.md`, `TBR_NATIVE_ADAPTER.md`, `TBR_NATIVE_SINGLE_RUN.md`; пути вида `Repo_Orchestrator_2/tasks/...` в словарях `CONTRACT`, `FEATURE_CONTRACT`, `NATIVE_CONTRACT`, `SCIENTIFIC_CONTRACT` и в `provenance.SOURCES` (`Repo_Research_2/artifacts/...`); `Repo_Code_2/artifacts/T056/S02_CHANGED_PATHS.md` (комментарий в `geometry.py`); метки задач и аудитов в комментариях (`T0xx`, `DESIGN T048`, `R8 addenda`) и слова «the m1 directory» в docstring драйвера. Эти строки код только записывает в документы плана и результатов; файлы по ним не читаются (вывод из чтения; подробности — в `docs/02`-`docs/06`).
 
@@ -69,7 +74,7 @@ docs/                          описание на русском (групп�
 - Python 3.10 или новее: в коде есть аннотации `int | None`, `list[int] | None`, `Decision | None`, вычисляемые при определении класса или функции (`simulator.py`, `tbr_policy.py`, `tbr_reference.py`).
 - Сторонние пакеты: `numpy` (напрямую его импортируют data, features, geometry, contacts, graph, model, policies, simulator, tbr_policy, tbr_reference, training), `torch` (graph, provenance и др.), `torch_geometric` (model).
 - `matplotlib`: подключается лениво, только внутри `experiment_plots.py` (команда `plot`); в метаданных исходного проекта не объявлена.
-- Версии. По прочтению метаданных исходного проекта (файл не входит в экспорт): `python >=3.10,<3.15`, `numpy>=1.26,<3`, `torch>=2.6,<3`, `torch-geometric>=2.6.1,<3`. Это пересказ прежнего чтения; в этой папке проверить его нельзя; совместимость конкретных версий не установлена.
+- Версии. Диапазоны записаны в `pyproject.toml` этой папки; он составлен по прочтению метаданных исходного проекта (файл не входит в экспорт): `python >=3.10,<3.15`, `numpy>=1.26,<3`, `torch>=2.6,<3`, `torch-geometric>=2.6.1,<3`. Это пересказ прежнего чтения; исходный файл в этой папке проверить нельзя; совместимость конкретных версий не установлена.
 - `torch` нужен и командам, которые выглядят лёгкими. `provenance.py` делает `import torch` на уровне модуля (проверено по тексту файла); его импортируют `cli.py`, `data.py`, `training.py` и `simulate.py`. Поэтому `python -m ssn_hops environment` и даже `python -m ssn_hops.simulate trace` требуют установленного `torch`. Каждой команде `python -m ssn_hops` нужен и `torch_geometric`: `cli.py` на верхнем уровне импортирует `training`, `training.py` импортирует `model`, а `model.py` — `torch_geometric.nn` (цепочка `cli` → `training` → `model`), тогда как в `simulate.py` модули `model` и `training` подключаются лениво и только для политики GLR (вывод из чтения). Цепочка `config` → `sim_config` → `traffic` импортирует только стандартную библиотеку (`sim_config.py` и `traffic.py` прочитаны, `config.py` — по индексу `docs/02`); значит, команда `plan` и модули драйвера, кроме `finish preflight`, по чтению обходятся без `torch`, но `docs/05` отмечает это как не установленное. Обучение и `finish preflight` требуют `torch` (см. `docs/03`, `docs/04` часть B2, `docs/06`).
 - Драйвер сам использует только стандартную библиотеку и пакет `ssn_hops`; он рассчитан на POSIX (Linux, WSL2): `run_cell` и `train_unit` при другой ОС бросают `OSError` (по `docs/06`).
 
@@ -77,7 +82,7 @@ docs/                          описание на русском (групп�
 
 Условия, найденные при чтении (`docs/06_DRIVER_CONFIGS_RU.md`, раздел 7):
 
-1. Рабочий каталог — корень экспорта (папка, где лежат `src/`, `driver/`, `configs/`); `PYTHONPATH` — абсолютный путь к `src`. Модули драйвера делают `from ssn_hops import ...`, а дочерние процессы наследуют окружение и каталог.
+1. Рабочий каталог — корень экспорта (папка, где лежат `src/`, `driver/`, `configs/`); `PYTHONPATH` — абсолютный путь к `src`. Модули драйвера делают `from ssn_hops import ...`, а дочерние процессы наследуют окружение и каталог. После `pip install -e .` (редакция 2; не проверялось запуском) `PYTHONPATH` для пакета `ssn_hops` не нужен; рабочий каталог — корень — по-прежнему нужен для `python -m driver.<модуль>`; способ с `PYTHONPATH` остаётся верным без установки. Пошаговая инструкция для VS Code — `docs/08_VSCODE_SETUP_RU.md`.
 2. `--slices`: умолчание в `run_cell.py` и `train_unit.py` — `Path(__file__).resolve().parents[1] / "slices.json"`, то есть `slices.json` в корне экспорта; такого файла нет. Обход (вывод из чтения): `--slices configs/slices_m1b_cgr.json`. В режимах `run_cell --cell` и `train_unit --n` файл срезов не читается; у `selector` и `traces` `--slices` обязателен.
 3. План привязан к абсолютному корню: `plan_io.check_binding` требует, чтобы `body["root"]` совпадал с каталогом `plan.json`. Перенесённый или скопированный план отвергается с текстом «root mismatch»: создайте новый план в окончательном месте (каталог `--out` не должен существовать).
 4. `--revision` — строка из 40 шестнадцатеричных знаков, задаваемая вызывающим; код git не читает. Проверка в `experiment_io.revision` требует строчные буквы; во всех командах одного плана значение одно и то же.
@@ -148,7 +153,8 @@ python -m driver.ledger sum LEDGER.jsonl [LEDGER2.jsonl ...] [--json]
 | 05 | `experiments`, `experiment_io`, `experiment_results`, `experiment_plots` | `docs/05_EXPERIMENTS_RU.md` | 15 (A1-A3, B1-B3, C1-C5, D1-D4) |
 | 06 | 8 файлов `driver/` и 4 файла `configs/` | `docs/06_DRIVER_CONFIGS_RU.md` | 16 (A1-A5, B1-B4, C1-C4, D1-D3) |
 | 07 | ограничения и неустановленное по всей системе | `docs/07_LIMITATIONS_RU.md` | 1 файл, без частей |
-| — | оговорки в формулировках и наблюдения при чтении | `docs/ERRATA_RU.md` | 3 файла (`ERRATA_RU.md`, `ERRATA_RU_part2.md`, `ERRATA_RU_part3.md`) |
+| 08 | установка и запуск в VS Code: окружение, `pip install -e .`, конфигурации запуска, разбор сбоев (редакция 2) | `docs/08_VSCODE_SETUP_RU.md` | 1 файл, без частей |
+| — | оговорки в формулировках и наблюдения при чтении | `docs/ERRATA_RU.md` | 4 файла (`ERRATA_RU.md`, `ERRATA_RU_part2.md`, `ERRATA_RU_part3.md`, `ERRATA_RU_part4.md`) |
 
 В группах 02-06 вместе 52 файла (индексы и части; ручной подсчёт по перечню `docs/`: 9 + 4 + 6 + 16 + 17); группа 01 — индекс и три части.
 

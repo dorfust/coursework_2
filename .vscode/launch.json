@@ -1,0 +1,200 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "a) ssn_hops environment",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ssn_hops",
+      "args": ["environment"],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": false
+    },
+    {
+      "name": "b) experiments plan (suite_m1b_cgr)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ssn_hops.experiments",
+      "args": [
+        "plan",
+        "--suite", "configs/suite_m1b_cgr.json",
+        "--out", "${input:planOut}",
+        "--revision", "${input:revision}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": false
+    },
+    {
+      "name": "c) driver.selector (read-only check of the slices)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "driver.selector",
+      "args": [
+        "--plan", "${input:planPath}",
+        "--slices", "configs/slices_m1b_cgr.json"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": false
+    },
+    {
+      "name": "d) driver.finish check (read-only report)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "driver.finish",
+      "args": [
+        "check",
+        "--plan", "${input:planPath}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": false
+    },
+    {
+      "name": "e) driver.run_cell --slice (EXECUTES; heavy)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "driver.run_cell",
+      "args": [
+        "--plan", "${input:planPath}",
+        "--revision", "${input:revision}",
+        "--ledger", "${input:ledgerPath}",
+        "--slices", "configs/slices_m1b_cgr.json",
+        "--slice", "${input:sliceId}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": false
+    },
+    {
+      "name": "f) driver.train_unit --slice (EXECUTES training; heavy)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "driver.train_unit",
+      "args": [
+        "--plan", "${input:planPath}",
+        "--revision", "${input:revision}",
+        "--ledger", "${input:ledgerPath}",
+        "--slices", "configs/slices_m1b_cgr.json",
+        "--slice", "${input:trainSliceId}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": false
+    },
+    {
+      "name": "g) driver.ledger sum",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "driver.ledger",
+      "args": [
+        "sum",
+        "${input:ledgerPath}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": false
+    },
+    {
+      "name": "h) experiments aggregate --allow-partial",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ssn_hops.experiments",
+      "args": [
+        "aggregate",
+        "--plan", "${input:planPath}",
+        "--out", "${input:summaryOut}",
+        "--allow-partial"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": false
+    },
+    {
+      "name": "i) experiments plot --allow-partial (needs matplotlib)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ssn_hops.experiments",
+      "args": [
+        "plot",
+        "--summary", "${input:summaryPath}",
+        "--out", "${input:plotOut}",
+        "--allow-partial"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": false
+    }
+  ],
+  "inputs": [
+    {
+      "id": "planOut",
+      "type": "promptString",
+      "description": "ABSOLUTE path of a NEW directory for the plan (it must not exist yet; the plan is bound to this path)"
+    },
+    {
+      "id": "revision",
+      "type": "promptString",
+      "description": "Revision: exactly 40 LOWERCASE hex characters (the code does not read git); the same value for every command of one plan"
+    },
+    {
+      "id": "planPath",
+      "type": "promptString",
+      "description": "Path of plan.json of an existing plan: <plan root>/plan.json (use the same absolute root as at planning)"
+    },
+    {
+      "id": "ledgerPath",
+      "type": "promptString",
+      "description": "Path of the ledger file (.jsonl; events are appended; for sum: an existing ledger)"
+    },
+    {
+      "id": "sliceId",
+      "type": "pickString",
+      "description": "Slice of configs/slices_m1b_cgr.json (slices with a train step also train)",
+      "options": ["TRAIN-132", "TRAIN-REST", "TRAIN-330", "PILOT", "B1B", "B264", "B330", "CGR-PILOT", "CGR-EXT1", "CGR-EXT2", "CGR-EXT3"],
+      "default": "TRAIN-132"
+    },
+    {
+      "id": "trainSliceId",
+      "type": "pickString",
+      "description": "Training slice (a slice without a train step is refused by train_unit)",
+      "options": ["TRAIN-132", "TRAIN-REST", "TRAIN-330"],
+      "default": "TRAIN-132"
+    },
+    {
+      "id": "summaryOut",
+      "type": "promptString",
+      "description": "Path of a NEW summary JSON file (it must not exist yet)"
+    },
+    {
+      "id": "summaryPath",
+      "type": "promptString",
+      "description": "Path of an existing summary JSON file (the output of aggregate)"
+    },
+    {
+      "id": "plotOut",
+      "type": "promptString",
+      "description": "Path of a NEW directory for the figures (it must not exist yet)"
+    }
+  ]
+}
