@@ -2,6 +2,42 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "1) run_all (normal)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/experiments/run_all.py",
+      "args": ["--config", "${input:runAllConfig}"],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONUTF8": "1"},
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "subProcess": false
+    },
+    {
+      "name": "2) run_all --debug",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/experiments/run_all.py",
+      "args": ["--config", "${input:runAllConfig}", "--debug"],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONUTF8": "1"},
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "subProcess": false
+    },
+    {
+      "name": "3) run_all --dry-run",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/experiments/run_all.py",
+      "args": ["--config", "${input:runAllConfig}", "--dry-run"],
+      "cwd": "${workspaceFolder}",
+      "env": {"PYTHONUTF8": "1"},
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "subProcess": false
+    },
+    {
       "name": "a) ssn_hops environment",
       "type": "debugpy",
       "request": "launch",
@@ -31,7 +67,7 @@
       "subProcess": false
     },
     {
-      "name": "c) driver.selector (read-only check of the slices)",
+      "name": "[POSIX/WSL2 only] c) driver.selector (read-only check of the slices)",
       "type": "debugpy",
       "request": "launch",
       "module": "driver.selector",
@@ -46,7 +82,7 @@
       "subProcess": false
     },
     {
-      "name": "d) driver.finish check (read-only report)",
+      "name": "[POSIX/WSL2 only] d) driver.finish check (read-only report)",
       "type": "debugpy",
       "request": "launch",
       "module": "driver.finish",
@@ -61,7 +97,7 @@
       "subProcess": false
     },
     {
-      "name": "e) driver.run_cell --slice (EXECUTES; heavy)",
+      "name": "[POSIX/WSL2 only] e) driver.run_cell --slice (EXECUTES; heavy)",
       "type": "debugpy",
       "request": "launch",
       "module": "driver.run_cell",
@@ -79,7 +115,7 @@
       "subProcess": false
     },
     {
-      "name": "f) driver.train_unit --slice (EXECUTES training; heavy)",
+      "name": "[POSIX/WSL2 only] f) driver.train_unit --slice (EXECUTES training; heavy)",
       "type": "debugpy",
       "request": "launch",
       "module": "driver.train_unit",
@@ -97,7 +133,7 @@
       "subProcess": false
     },
     {
-      "name": "g) driver.ledger sum",
+      "name": "[POSIX/WSL2 only] g) driver.ledger sum",
       "type": "debugpy",
       "request": "launch",
       "module": "driver.ledger",
@@ -147,6 +183,12 @@
     }
   ],
   "inputs": [
+    {
+      "id": "runAllConfig",
+      "type": "promptString",
+      "description": "Config file for experiments/run_all.py (path relative to the project folder or absolute; config.yaml needs PyYAML, config.example.json does not)",
+      "default": "config.yaml"
+    },
     {
       "id": "planOut",
       "type": "promptString",

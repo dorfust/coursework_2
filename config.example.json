@@ -1,0 +1,23 @@
+{
+  "revision": "PUT-40-LOWERCASE-HEX-COMMIT-SHA-HERE",
+  "suite": "configs/suite_m1b_cgr.json",
+  "output_root": "outputs/run_001",
+  "stages": ["plan", "train", "execute", "aggregate", "plot"],
+  "plan": {
+    "models": null,
+    "baselines_only": false,
+    "include_native_tbr": false,
+    "tbr_max_nodes": null,
+    "tbr_max_expansions": null
+  },
+  "aggregate": {
+    "allow_partial": false,
+    "reference": "TBR_style_hop_oracle"
+  },
+  "plot": {
+    "allow_partial": false
+  },
+  "run": {
+    "progress_interval_s": 60
+  }
+}
