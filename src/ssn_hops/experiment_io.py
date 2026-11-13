@@ -1,4 +1,8 @@
 """Standard-library experiment records; no execution occurs on import."""
+# Contents: schema names; native and enumeration plan metadata; JSON read, write and digest; the path guard
+# (inside); plan validation (legacy, scoped, enumeration, native); execution_guard; job, which starts a child
+# process only when it is called. Imports: the standard library plus .config and .sim_config of this
+# package (their own imports are not listed here).
 import hashlib
 import json
 from numbers import Integral
@@ -17,6 +21,18 @@ NATIVE_CONTRACT = {"path": "Repo_Orchestrator_2/tasks/T011-S02-experiment-transp
                    "commit": "5df25ab5514475d4c14acb228aff7044e0103eaf",
                    "blob": "6f5b7b310819c08eac7a42a4453bdddbe85bb9f0",
                    "step": "R3/A09/S02B2A"}
+# T125: optional TBR_enumeration policy. This module is stdlib-only, so the name, the search
+# identity and the default budgets are DUPLICATED here from tbr_enum.py; verify_enum_counters
+# (experiment_results) compares the budgets and identity of every saved cell with the plan.
+ENUM_POLICY_NAME = "TBR_enumeration"
+ENUM_SEARCH_IDENTITY = "iterative_deepening_full_enumeration_v1"
+# Budgets count expansions; one expansion is one search prefix entered (see tbr_enum.py). CALL limits one
+# policy call: an incomplete call returns None and the packet waits. CELL limits the cumulative expansions
+# of one policy instance, i.e. one simulation cell: afterwards every call is skipped. The default CELL
+# value is 1000 times the default CALL value. Both are safety controls, not paper settings.
+ENUM_DEFAULT_MAX_CALL_EXPANSIONS = 200000
+ENUM_DEFAULT_MAX_CELL_EXPANSIONS = 200000000
+ENUM_FLAGS = ("--enum-max-call-expansions", "--enum-max-cell-expansions")
 
 
 def positive_budget(value, name):
@@ -35,6 +51,10 @@ def native_options(include, max_nodes=None, max_expansions=None):
         if max_nodes is not None or max_expansions is not None:
             raise ValueError("TBR budgets require explicit native opt-in")
         return None
+    # 12 is the default max_nodes (planning raises for a resolved N above max_nodes, see resolve_plan_inputs
+    # in experiments.py); 100000 is the default max_expansions. validate_native_plan compares the whole
+    # returned mapping, strings included, by content hash with a re-derived copy, so an edit of any value
+    # here makes saved native plans fail that check.
     nodes = positive_budget(12 if max_nodes is None else max_nodes, "tbr_max_nodes")
     expansions = positive_budget(100000 if max_expansions is None else max_expansions, "tbr_max_expansions")
     return {"policy_identity": NATIVE_POLICY_NAME,
@@ -52,6 +72,36 @@ def native_options(include, max_nodes=None, max_expansions=None):
             "single_run_source_commit": "1e3c62450ceb68a31ba7a298fdabfbfb015a9f1b"}
 
 
+def enum_options(include, max_call=None, max_cell=None):
+    """T125: metadata of the optional TBR_enumeration plan option, or None when it is off.
+
+    Budgets without the opt-in are an error (mirrors native_options). The returned mapping is
+    stored as body['tbr_enumeration'] and re-derived by check_enum_plan.
+    """
+    if type(include) is not bool:
+        raise ValueError("include_tbr_enumeration must be boolean")
+    if not include:
+        if max_call is not None or max_cell is not None:
+            raise ValueError("enumeration budgets require explicit opt-in (include_tbr_enumeration)")
+        return None
+    calls = positive_budget(ENUM_DEFAULT_MAX_CALL_EXPANSIONS if max_call is None else max_call,
+                            "enum_max_call_expansions")
+    cells = positive_budget(ENUM_DEFAULT_MAX_CELL_EXPANSIONS if max_cell is None else max_cell,
+                            "enum_max_cell_expansions")
+    return {"policy_identity": ENUM_POLICY_NAME,
+            "search_identity": ENUM_SEARCH_IDENTITY,
+            "objective": "min_edges_then_lexicographic_full_path",
+            "max_call_expansions": calls, "max_cell_expansions": cells,
+            "budget_scope": "independent safety controls; NOT paper settings",
+            "incomplete_rule": "an incomplete or skipped call returns None (the packet waits); never a route from partial work; never a fallback router",
+            "scope": "optional second run; incomplete searches are allowed and reported (completeness_share); the plan keeps the legacy plan schema",
+            "authority": "independently specified iterative-deepening enumeration; NOT the paper's brute force"}
+
+
+# The keys and text mirror the native_reference mapping that run_single in simulate.py builds (same 13 keys;
+# the values of search_identity and objective are imported there and are not compared here).
+# native_transport_check compares content hashes of the saved mappings with this one, so a difference
+# between the two copies makes that check raise.
 def single_run_native_reference(native):
     """Exact frozen single-run declaration, NOT relabeled as aggregated evidence.
 
@@ -81,6 +131,12 @@ def read(path):
 
 
 def write(path, value):
+    """Write value as JSON to a new file, creating the parent folders.
+
+    The file is opened with mode x (exclusive creation); this is where the pipeline's no-overwrite rule
+    is applied. json.dump is called with indent=2, sort_keys=True and allow_nan=False, then a newline is
+    written. The JSON goes directly into that file: no temporary file and no rename are used.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("x", encoding="utf-8") as handle:
@@ -88,6 +144,7 @@ def write(path, value):
         handle.write("\n")
 
 
+# sha256 hex digest of the file, read in blocks of 1024 * 1024 bytes.
 def digest(path):
     result = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -97,16 +154,32 @@ def digest(path):
 
 
 def revision(value):
+    # Format check only: 40 lowercase hex characters. The value is not compared with any repository here;
+    # execution_guard compares it with the revision stored in the plan.
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
         raise ValueError("revision must be the actual lowercase 40-character checkout SHA")
     return value
 
 
 def source_hashes():
+    """sha256 of every *.py file in the folder of this module, as {file name: hex digest}.
+
+    The glob pattern is *.py (no recursive pattern is used). make_plan stores the result as
+    body['source_sha256']; execution_guard (called by train_suite and execute_suite) compares the current
+    result with that stored copy and raises ValueError if they differ. So any later change to any *.py
+    file of the package, a comment-only edit included, or an added or removed *.py file, makes
+    execution_guard raise, and the plan has to be made again. The folder is taken from __file__ of this
+    module.
+    """
     return {p.name: digest(p) for p in sorted(Path(__file__).parent.glob("*.py"))}
 
 
 def inside(root, relative):
+    """Return (root / relative).resolve() for a relative path that stays inside the root.
+
+    Raises ValueError for an absolute path, for any '..' part, and when the resolved path is not under
+    the resolved root.
+    """
     relative = Path(relative)
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError("artifact paths must be relative without parent traversal")
@@ -117,6 +190,13 @@ def inside(root, relative):
 
 
 def schema_guard(plan):
+    """Refuse unknown plan schemas and legacy-schema plans that carry native markers.
+
+    Only PLAN_SCHEMA and NATIVE_PLAN_SCHEMA are accepted. A PLAN_SCHEMA plan is refused if its body has
+    native_reference or resolved_templates, lists the native policy name in policies or in a cell, or has
+    --tbr-max-nodes or --tbr-max-expansions in a cell command. Enumeration markers are not refused here
+    (see check_enum_plan).
+    """
     if plan.get("schema") not in (PLAN_SCHEMA, NATIVE_PLAN_SCHEMA):
         raise ValueError("unsupported plan schema; v1 plans/results must be regenerated for the T022-S01 input contract")
     if plan["schema"] == PLAN_SCHEMA:
@@ -136,6 +216,7 @@ def validate_native_plan(plan):
     Hashes detect accidental mismatch, not deliberate forgery of all inputs.
     Saved resolved templates avoid rereading movable original suite/template paths.
     """
+    # Imported inside the function: experiments.py imports this module at its top level.
     from .experiments import (CONTRACT, FEATURE_CONTRACT, POLICIES, merge,
                               plan_commands, resolve_plan_inputs, validate_suite)
     body = plan["body"]
@@ -206,19 +287,22 @@ def check_scoped_plan(document):
 
     Called by validate_plan ONLY when at least one scenario has the field (policy_scope plans);
     legacy plans never reach it. Rules (all-or-none): every scenario declares a nonempty list of
-    distinct known policies in canonical POLICIES order (the native policy is not allowed);
+    distinct known policies in canonical POLICIES order (the native policy is not allowed;
+    T125: the optional TBR_enumeration policy is known and ranks after POLICIES);
     body['policies'] equals the union of those lists in canonical order (hence a superset of each);
     the cells equal, in order, scenarios x their declared policies with ids '<scenario>--<policy>';
     native-schema plans are rejected. Cell commands/out paths are not re-derived here (as for legacy plans).
     """
+    # Imported inside the function: experiments.py imports this module at its top level.
     from .experiments import POLICIES
+    ordered = POLICIES + (ENUM_POLICY_NAME,)
     body = document["body"]
     if document["schema"] == NATIVE_PLAN_SCHEMA:
         raise ValueError("native plans do not support policy_scope")
     scenarios = body["scenarios"]
     if not all("policies" in s for s in scenarios):
         raise ValueError("scoped plan: every scenario must declare policies (mixed plans are rejected)")
-    rank = {policy: i for i, policy in enumerate(POLICIES)}
+    rank = {policy: i for i, policy in enumerate(ordered)}
     union = set()
     for scenario in scenarios:
         declared = scenario["policies"]
@@ -228,7 +312,7 @@ def check_scoped_plan(document):
             raise ValueError("scoped plan: scenario policies must be a nonempty canonical-order "
                              "list of distinct known policies")
         union.update(declared)
-    if body["policies"] != [p for p in POLICIES if p in union]:
+    if body["policies"] != [p for p in ordered if p in union]:
         raise ValueError("scoped plan: body policies differ from the union of scenario policies "
                          "in canonical order")
     expected = [(s["id"] + "--" + p, s["id"], p) for s in scenarios for p in s["policies"]]
@@ -237,7 +321,57 @@ def check_scoped_plan(document):
         raise ValueError("scoped plan: cells differ from scenarios x their declared policies")
 
 
+def check_enum_plan(body):
+    """T125: plans that carry the optional TBR_enumeration policy; any other plan: nothing is checked.
+
+    A plan 'carries' it when the policy name, the body key tbr_enumeration or an enumeration
+    flag in a cell command is present. Then: the metadata equals enum_options(...) of its own
+    budgets; the policy is listed; every scenario has exactly one enumeration cell; every
+    enumeration cell command holds both flags with the planned values; no other cell holds them.
+    """
+    # The expected budgets are taken from the plan's own body["tbr_enumeration"], so this check shows that
+    # the metadata, the policy list and the cell commands agree with each other, not that the budgets equal
+    # the defaults. A flag is checked through the token right after its first occurrence in the command.
+    cells = body.get("cells", [])
+    used = (ENUM_POLICY_NAME in body.get("policies", []) or "tbr_enumeration" in body
+            or any(c.get("policy") == ENUM_POLICY_NAME
+                   or any(flag in c.get("command", []) for flag in ENUM_FLAGS) for c in cells))
+    if not used:
+        return
+    try:
+        given = body["tbr_enumeration"]
+        expected = enum_options(True, given["max_call_expansions"], given["max_cell_expansions"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("malformed TBR_enumeration plan options") from exc
+    if content_hash(given) != content_hash(expected):
+        raise ValueError("TBR_enumeration plan metadata mismatch")
+    if ENUM_POLICY_NAME not in body.get("policies", []):
+        raise ValueError("TBR_enumeration plan options without the policy in the policy list")
+    values = (str(expected["max_call_expansions"]), str(expected["max_cell_expansions"]))
+    enum_cells = 0
+    for cell in cells:
+        command = cell["command"]
+        if cell["policy"] == ENUM_POLICY_NAME:
+            enum_cells += 1
+            for flag, value in zip(ENUM_FLAGS, values):
+                if flag not in command or command[command.index(flag) + 1:command.index(flag) + 2] != [value]:
+                    raise ValueError("TBR_enumeration cell command lacks the planned budget flags")
+        elif any(flag in command for flag in ENUM_FLAGS):
+            raise ValueError("enumeration budget flags in a cell of another policy")
+    if enum_cells != len(body["scenarios"]):
+        raise ValueError("TBR_enumeration plan needs one enumeration cell per scenario")
+
+
 def validate_plan(document, expected_root=None):
+    """Structural and hash checks of a saved plan; returns the document or raises.
+
+    Order: keys schema, body, sha256; schema_guard; content_hash(body) equals sha256; revision format;
+    the recorded root equals expected_root if given (a moved plan is refused); sha256 of every file
+    listed in body['file_sha256'] (the saved configs); cell, config and trace paths stay inside the
+    root; unique cell ids; check_scoped_plan if any scenario has policies; check_enum_plan;
+    validate_native_plan for the native schema, where KeyError, TypeError, AttributeError and
+    OverflowError become ValueError.
+    """
     if set(document) != {"schema", "body", "sha256"}:
         raise ValueError("unsupported plan fields")
     schema_guard(document)
@@ -255,11 +389,12 @@ def validate_plan(document, expected_root=None):
         inside(root, cell["out"])
         inside(root, cell["config_path"])
     for scenario in body["scenarios"]:
-        inside(root, scenario["trace_path"])
+        inside(root, trace_path_placeholder := scenario["trace_path"])
     if len({c["id"] for c in body["cells"]}) != len(body["cells"]):
         raise ValueError("duplicate plan cell")
     if any("policies" in s for s in body["scenarios"]):
         check_scoped_plan(document)
+    check_enum_plan(body)
     if document["schema"] == NATIVE_PLAN_SCHEMA:
         try:
             validate_native_plan(document)
@@ -269,11 +404,17 @@ def validate_plan(document, expected_root=None):
 
 
 def load_plan(path):
+    """Read a plan file and validate it with the folder of that file as expected_root."""
     path = Path(path).resolve()
     return validate_plan(read(path), path.parent)
 
 
 def execution_guard(plan, supplied_revision):
+    """Preconditions of train_suite and execute_suite; writes nothing; raises ValueError.
+
+    Order: schema_guard; validate_plan(plan) if the plan has the native schema; the supplied revision
+    (40 lowercase hex characters) equals body['revision']; source_hashes() equals body['source_sha256'].
+    """
     schema_guard(plan)
     if plan["schema"] == NATIVE_PLAN_SCHEMA:
         # Direct API execution gets the same hash/path/config/bounds/argv preflight.
@@ -303,6 +444,8 @@ def native_transport_check(plan, cell, scenario):
             raise ValueError("native policy details identity/limits mismatch")
     if result.get("declared_checkout_revision") != plan["body"]["revision"]:
         raise ValueError("native result revision mismatch")
+    # expected_files are the five names that run_single in simulate.py puts into output_sha256; result.json
+    # and complete.json are not among them (result.json and complete.json are read and compared above).
     expected_files = {"config.json", "traffic.json", "provenance.json", "packets.json", "events.jsonl"}
     hashes = result.get("output_sha256", {})
     if set(hashes) != expected_files:
@@ -327,6 +470,12 @@ def native_transport_check(plan, cell, scenario):
         raise ValueError("native provenance input hashes mismatch")
 
 
+# Details: argv is [sys.executable] plus command[1:] (command[0], the literal "python" of the planned
+# commands, is ignored); no shell; the working directory is that of the current process (recorded as cwd).
+# Files in <root>/logs: <id>.started.json before the run; <id>.stdout.txt and <id>.stderr.txt (opened with
+# mode x); <id>.status.json after the run, with the exit code and the sha256 of both logs. The child's
+# stdout and stderr go to those files, not to the console. A nonzero exit code writes status.json and then
+# raises RuntimeError; an exception while starting is recorded in status.json (exit_code None) and re-raised.
 def job(root, job_id, command, plan):
     """User-invoked subprocess, argv only, no shell; exclusive logs/status."""
     root = Path(root)
