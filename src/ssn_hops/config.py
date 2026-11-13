@@ -21,8 +21,10 @@ from pathlib import Path
 TOPOLOGY_FEATURES = "adjacency_spliced_two_hop"
 ABLATION_FEATURES = "topology_only_ablation"  # legacy alias of TOPOLOGY_FEATURES behaviour
 DELAY_FEATURES = "adjacency_spliced_two_hop_propagation_delay"  # optional extension
+# Not referenced elsewhere in this file.
 TOPOLOGY_ONLY_MODES = (TOPOLOGY_FEATURES, ABLATION_FEATURES)
 SUPPORTED_FEATURES = (TOPOLOGY_FEATURES, ABLATION_FEATURES, DELAY_FEATURES)
+# Units: LIGHT_SPEED_KM_S is in km/s, DELAY_SCALE_S is in seconds.
 LIGHT_SPEED_KM_S = 299792.458
 DELAY_SCALE_S = 0.01
 # Persisted inside dataset manifests and checkpoints (strict equality checks).
@@ -33,6 +35,10 @@ TOPOLOGY_SPEC_AUTHORITY = ("paper input set (original input + 1/0.5 two-hop-enco
                            "H0 row layout [A] / [A|Q] is an independent reconstruction, NOT recovered author H0")
 
 
+# canonical_json: keys sorted, separators (",", ":") without spaces, allow_nan=False.
+# content_hash: SHA-256 hex digest of the UTF-8 bytes of canonical_json(value).
+# Config.sha256 and Config.data_key below use it; geometry.py (trajectory_id) and
+# data.py (manifest config check) import it too. Changing this format changes all of them.
 def canonical_json(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
@@ -41,6 +47,10 @@ def content_hash(value):
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
+# Validators (finite_number, positive, integer): each raises ValueError when its check fails.
+# integer: the value must have exactly type int (bool is rejected); minimum defaults to 1.
+# positive: int or float but not bool, finite and > 0.
+# finite_number: int or float but not bool, finite.
 def finite_number(value, name):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a finite number")
@@ -62,6 +72,17 @@ def integer(value, name, minimum=1):
 
 @dataclass(frozen=True)
 class OrbitConfig:
+    """Circular-orbit constellation: n satellites in `planes` planes.
+
+    validate() requires n % planes == 0, planes <= n, 0 <= walker_f < planes,
+    inclination_deg in [0, 180] and eccentricity == 0 (only circular orbits are
+    implemented). Units follow the field names: km, degrees (inclination_deg),
+    seconds (epoch_s), km^3/s^2 (mu_km3_s2). phase_mode is "walker" or
+    "independent_plane_offsets"; walker_f and phase_mode are used by
+    make_trajectory in geometry.py. range_km is the link range limit that
+    graph_from_positions in geometry.py compares inclusively. earth_los switches
+    an additional line-of-sight test against the Earth sphere of earth_radius_km.
+    """
     n: int = 132
     planes: int = 12
     earth_radius_km: float = 6371.0
@@ -100,6 +121,15 @@ class OrbitConfig:
 
 @dataclass(frozen=True)
 class DataConfig:
+    """Dataset settings: seeds per split and the snapshot schedule.
+
+    Each seed selects one whole trajectory (make_trajectory in geometry.py). The
+    three seed lists must be non-empty lists of ints in [0, 2**32) and no value may
+    repeat within or across train, val and test. Snapshot i of a trajectory is at
+    start_s + i*step_s seconds, so with the defaults (24 snapshots, 120.0 s apart)
+    the last one is at 2760.0 s. mask_diagonal is passed to shortest_hops (see
+    data.py).
+    """
     train_seeds: list[int] = field(default_factory=lambda: [101, 102, 103, 104, 105, 106, 107, 108])
     val_seeds: list[int] = field(default_factory=lambda: [201, 202])
     test_seeds: list[int] = field(default_factory=lambda: [301, 302])
@@ -130,6 +160,14 @@ class DataConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
+    """Network sizes and input-feature mode.
+
+    gcn_width is the output width of both GCNConv layers of each branch and
+    dense_width is the hidden width of the Linear predictor; gcn_bias and
+    dense_bias are the bias switches passed to those layers (see model.py).
+    delay_kind, delay_scale_s, light_speed_km_s, orientation and feature_version
+    are fixed values: validate() rejects any other value for them.
+    """
     gcn_width: int = 32
     dense_width: int = 64
     gcn_bias: bool = False
@@ -217,6 +255,18 @@ def require_supported_model(model_config):
 
 @dataclass(frozen=True)
 class TrainConfig:
+    """Training settings, as used by train() in training.py.
+
+    seed seeds the Python, NumPy and torch generators and the NumPy generator that
+    shuffles the training snapshots. epochs is the maximum number of epochs;
+    patience is the number of consecutive epochs without a strict improvement of
+    the validation MSE after which training stops. batch_size is the number of
+    snapshots per optimizer step. beta weights the unsquared L2 norm of the
+    parameters in hop_loss (loss.py). learning_rate, adam_betas and adam_eps are
+    passed to torch.optim.Adam. device is resolved by resolve_device in
+    training.py (cpu, or cuda with an optional index). threads is passed to
+    torch.set_num_threads and deterministic to torch.use_deterministic_algorithms.
+    """
     seed: int = 17
     epochs: int = 100
     batch_size: int = 4
@@ -283,9 +333,16 @@ class Config:
         # never on model.features (verified by reading data.py, T022-S01). The manifest
         # separately records feature_spec and re-checks it, so archived manifests stay
         # valid only while the persisted feature_spec bytes stay unchanged.
+        # The constant 1 in this key is not Config.schema_version (default 2); the reason
+        # for 1 is not stated in this file. Only orbit and data enter the key (model and
+        # train do not); Config.sha256 above hashes all sections.
         return content_hash({"schema_version": 1, "orbit": asdict(self.orbit), "data": asdict(self.data)})
 
 
+# Strict loading: _section and from_dict raise ValueError for unknown keys and for a value
+# that is not a dict; missing keys take the dataclass defaults (schema_version defaults to 2);
+# values are not converted; from_dict ends with validate(). load_config opens the file as
+# UTF-8, reads it with json.load and passes the result to from_dict.
 def _section(cls, value):
     if not isinstance(value, dict):
         raise ValueError(f"{cls.__name__} must be an object")
