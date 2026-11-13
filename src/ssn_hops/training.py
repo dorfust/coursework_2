@@ -12,10 +12,18 @@ from .loss import hop_loss, parameter_l2
 from .model import HopRegressor
 from .provenance import file_sha256, provenance, read_json, write_json
 
+# Stored in every checkpoint payload and in best.json; compared against on load.
 CHECKPOINT_FORMAT = "ssn-hops-fixed-n-v2"
 
 
 def resolve_device(name):
+    """Return a torch.device for name, or raise ValueError.
+
+    Accepted: cpu without an index, and cuda (with or without an index) only if
+    torch.cuda.is_available() is true and the index is below torch.cuda.device_count().
+    Any other device type raises ValueError. A name that torch.device cannot parse is
+    not handled in this function.
+    """
     device = torch.device(name)
     if device.type == "cpu":
         if device.index is not None:
@@ -31,6 +39,15 @@ def resolve_device(name):
 
 
 def seed_training(config):
+    """Set process-wide generator and library state from the training config.
+
+    Seeds random, numpy.random and torch (and the CUDA generators if CUDA is available),
+    sets the torch thread count to config.threads, calls
+    torch.use_deterministic_algorithms(config.deterministic) and, if cudnn is available,
+    sets cudnn benchmark to False and cudnn deterministic to config.deterministic. These
+    calls change global state of the libraries; the function does not restore the previous
+    values when it returns.
+    """
     random.seed(config.seed)
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
@@ -44,6 +61,16 @@ def seed_training(config):
 
 
 def tensors_for_snapshot(arrays, index, device, model_config=None):
+    """Build the model inputs and the label tensors of snapshot number index.
+
+    model_config=None selects ModelConfig(), the default configuration (features is
+    TOPOLOGY_FEATURES in config.py, so no delay inputs), not the config of any model:
+    pass the model's own config when it may differ from the default. Ranges in km are
+    computed from positions_km only if the config uses delay. Returns (inputs, target,
+    mask): inputs is what branch_inputs returns, target is a float32 tensor and mask a
+    bool tensor, all on device. Nothing is cached here: the inputs are rebuilt on every
+    call.
+    """
     config = model_config if model_config is not None else ModelConfig()
     config.validate()
     ranges = ranges_from_positions(arrays["positions_km"][index]) if config.uses_delay else None
@@ -54,6 +81,10 @@ def tensors_for_snapshot(arrays, index, device, model_config=None):
     return inputs, target, mask
 
 
+# Unit suffixes are part of the key names (mse_hops2, rmse_hops, ...). masked_pairs counts every
+# False entry of arrays["mask"], whatever the reason. unreachable_offdiagonal_fraction divides by
+# snapshots * n * (n - 1). The function calls model.eval() and does not switch back to train mode;
+# train() calls model.train() at the start of every epoch.
 @torch.no_grad()
 def static_metrics(model, arrays, device):
     """Micro-average reachable supervised pairs, not per-snapshot averages.
@@ -108,6 +139,10 @@ def feature_provenance(cfg, manifest):
     # Persisted in checkpoints and compared strictly on load. The delay-extension and
     # legacy-alias texts are byte-identical to pre-T022 values on purpose (archived
     # checkpoints stay loadable); only the new default literal gets new wording.
+    # The returned dict is stored in the checkpoint and compared for equality in
+    # load_trained_model (payload["feature_provenance"] != feature_provenance(cfg, manifest)).
+    # A change to any text here, or a different manifest["schema_version"], gives a value that
+    # differs from what an existing checkpoint stored.
     if cfg.model.uses_delay:
         scale_origin = "fixed physical 0.01 seconds; not fitted to any split"
     elif cfg.model.features == ABLATION_FEATURES:
@@ -124,6 +159,20 @@ def feature_provenance(cfg, manifest):
 
 
 def train(cfg, dataset_dir, run_dir, revision):
+    """Train one model, write a NEW run directory and return the best.json summary dict.
+
+    Before anything is written: cfg is validated, the device is resolved, load_dataset
+    must accept dataset_dir for cfg, and every split must contain supervised pairs
+    (mask.any()). The run directory is then created with exist_ok=False and written in
+    this order: config.json, dataset_manifest.json, provenance.json (with an
+    input_features entry), then history.jsonl (opened with mode x; one canonical JSON
+    line per epoch, flushed after each epoch) and best.pt (written through best.pt.tmp
+    at every epoch that improves the validation MSE). After the epoch loop come
+    best.json and, last, complete.json. There is no cleanup: if an exception ends the
+    call, the files written so far stay. Such a directory has no complete.json, which
+    load_trained_model requires, and a call with the same run_dir meets an existing
+    directory while mkdir is called with exist_ok=False.
+    """
     cfg.validate()
     device = resolve_device(cfg.train.device)
     data, manifest = load_dataset(dataset_dir, cfg)
@@ -141,6 +190,8 @@ def train(cfg, dataset_dir, run_dir, revision):
     origin["input_features"] = feature_record
     write_json(run / "provenance.json", origin)
     model = HopRegressor(cfg.orbit.n, cfg.model).to(device)
+    # weight_decay is 0.0 here; the parameter penalty is added through hop_loss
+    # (beta * parameter_l2), not through the optimizer.
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.train.learning_rate,
                                  betas=tuple(cfg.train.adam_betas), eps=cfg.train.adam_eps,
                                  weight_decay=0.0)
@@ -156,6 +207,11 @@ def train(cfg, dataset_dir, run_dir, revision):
             order = rng.permutation(len(training_arrays["adjacency"]))
             online_sse = 0.0
             online_pairs = optimizer_steps = skipped_batches = 0
+            # A batch is up to cfg.train.batch_size snapshots of the shuffled order (a new
+            # rng.permutation in every epoch). Each snapshot is passed through the model on its
+            # own; the outputs are stacked and one pooled loss gives one optimizer step per
+            # batch. The last batch may be smaller. A batch without any supervised pair is
+            # skipped and counted in skipped_batches.
             for offset in range(0, len(order), cfg.train.batch_size):
                 predictions, targets, masks = [], [], []
                 for index in order[offset:offset + cfg.train.batch_size]:
@@ -184,6 +240,10 @@ def train(cfg, dataset_dir, run_dir, revision):
                 raise ValueError("training epoch has no supervised pairs")
             validation = static_metrics(model, data["val"], device)
             norm = float(parameter_l2(model).detach().cpu())
+            # online_train_mse_hops2 is accumulated from the predictions made in train mode before
+            # each optimizer step of this epoch (hops^2), not from a separate pass after the epoch.
+            # validation is static_metrics on the validation split after the epoch; parameter_l2 is
+            # the unsquared norm; validation_regularized_objective is validation MSE + beta * norm.
             record = {"epoch": epoch, "online_train_mse_hops2": online_sse / online_pairs,
                       "train_pairs": online_pairs, "optimizer_steps": optimizer_steps,
                       "skipped_empty_batches": skipped_batches, "parameter_l2": norm,
@@ -192,6 +252,13 @@ def train(cfg, dataset_dir, run_dir, revision):
             history.append(record)
             handle.write(canonical_json(record) + "\n")
             handle.flush()
+            # Model selection: the checkpoint with the smallest validation MSE is kept. That is
+            # validation["mse_hops2"] (micro-average over the supervised pairs of the validation
+            # split, raw outputs), without the beta term; the regularized objective is only logged
+            # in the record. The comparison is a strict "<", so on equal values the earlier epoch
+            # stays. best starts at math.inf, so any finite first value counts as an improvement.
+            # stale counts the epochs since the last strict improvement and is reset to 0 by one;
+            # the loop ends when stale >= cfg.train.patience or after cfg.train.epochs epochs.
             if validation["mse_hops2"] < best:
                 best, best_epoch, stale = validation["mse_hops2"], epoch, 0
                 payload = {"format": CHECKPOINT_FORMAT, "config": cfg.to_dict(),
@@ -242,6 +309,20 @@ def validate_checkpoint_metadata(payload, expected_model_config=None):
 
 
 def load_trained_model(run_dir, device_name="cpu", expected_model_config=None):
+    """Load the best checkpoint of a finished run and return (model, metadata).
+
+    Reads complete.json, best.json, best.pt, config.json, dataset_manifest.json and
+    provenance.json from run_dir. The checks run in this order: training_finished is
+    true in complete.json; the format in best.json; the SHA-256 of best.pt against
+    best.json; best.pt is then loaded with weights_only=True and passed to
+    validate_checkpoint_metadata (config hash, data_key, feature provenance, and equality
+    with expected_model_config if one is given); config.json against the checkpoint
+    config; best.json against the payload; the SHA-256 of dataset_manifest.json; the
+    archived manifest through validate_manifest; the feature provenance recomputed by
+    feature_provenance; the input_features entry of provenance.json; and finally
+    load_state_dict with strict=True. The model is returned in eval mode on device_name;
+    metadata is the payload without model_state and optimizer_state.
+    """
     run = Path(run_dir)
     device = resolve_device(device_name)
     if read_json(run / "complete.json").get("training_finished") is not True:
@@ -279,6 +360,16 @@ def load_trained_model(run_dir, device_name="cpu", expected_model_config=None):
 
 
 def evaluate(run_dir, dataset_dir, split, output, revision, device_name="cpu"):
+    """Evaluate the checkpoint of run_dir on one split of the dataset it was trained on.
+
+    The config is taken from the checkpoint and load_dataset checks the dataset against
+    it. The SHA-256 of manifest.json in dataset_dir must equal the
+    dataset_manifest_sha256 stored in the checkpoint, otherwise ValueError is raised.
+    The result dict (metrics, checkpoint and config hashes, and provenance(revision) of
+    the evaluating run) is written with write_json to output, after the parent folders
+    of output have been created, and is also returned. split must be train, val or test;
+    device_name defaults to cpu.
+    """
     if split not in ("train", "val", "test"):
         raise ValueError("split must be train, val or test")
     model, metadata = load_trained_model(run_dir, device_name)
