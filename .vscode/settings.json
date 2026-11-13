@@ -1,5 +1,6 @@
 {
   "python.analysis.extraPaths": ["${workspaceFolder}/src"],
+  "python.terminal.activateEnvironment": false,
   "terminal.integrated.env.linux": {
     "PYTHONPATH": "${workspaceFolder}/src"
   },
@@ -11,10 +12,17 @@
   "terminal.integrated.defaultProfile.windows": "Command Prompt",
   "files.exclude": {
     "**/__pycache__": true,
-    "**/*.egg-info": true
+    "**/*.egg-info": true,
+    "**/.venv": true
   },
   "files.watcherExclude": {
     "**/__pycache__/**": true,
-    "**/*.egg-info/**": true
+    "**/*.egg-info/**": true,
+    "**/.venv/**": true,
+    "**/outputs/**": true
+  },
+  "search.exclude": {
+    "**/.venv": true,
+    "**/outputs": true
   }
 }

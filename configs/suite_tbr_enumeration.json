@@ -1,0 +1,20 @@
+{
+  "schema": "ssn-experiment-suite-v1",
+  "name": "tbr_enumeration_second_run_r5",
+  "core_template": "n132.json",
+  "simulation_template": "simulation_n132.json",
+  "training_overrides": {
+    "model": {"features": "adjacency_spliced_two_hop", "feature_version": 1},
+    "train": {"epochs": 300}
+  },
+  "simulation_overrides": {},
+  "seed_tuples": [[401, 501, 601], [402, 502, 602], [403, 503, 603], [404, 504, 604], [405, 505, 605]],
+  "grids": [
+    {"name": "interruption", "axis": "failure_probability", "sizes": [{"n": 132, "planes": 12}], "probabilities": [0.04]},
+    {"name": "size", "axis": "n", "sizes": [{"n": 132, "planes": 12}], "probabilities": [0.04]}
+  ],
+  "sensitivities": [{"name": "reference", "overrides": {}}],
+  "policy_scope": {
+    "CGR_contact_plan": {"n": []}
+  }
+}

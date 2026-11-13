@@ -2,11 +2,10 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "1) run_all (normal)",
+      "name": "Start: full run",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/experiments/run_all.py",
-      "args": ["--config", "${input:runAllConfig}"],
+      "program": "${workspaceFolder}/start.py",
       "cwd": "${workspaceFolder}",
       "env": {"PYTHONUTF8": "1"},
       "console": "integratedTerminal",
@@ -14,11 +13,10 @@
       "subProcess": false
     },
     {
-      "name": "2) run_all --debug",
+      "name": "Start: quick smoke test",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/experiments/run_all.py",
-      "args": ["--config", "${input:runAllConfig}", "--debug"],
+      "program": "${workspaceFolder}/start_quick.py",
       "cwd": "${workspaceFolder}",
       "env": {"PYTHONUTF8": "1"},
       "console": "integratedTerminal",
@@ -26,11 +24,10 @@
       "subProcess": false
     },
     {
-      "name": "3) run_all --dry-run",
+      "name": "Start: TBR enumeration only",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/experiments/run_all.py",
-      "args": ["--config", "${input:runAllConfig}", "--dry-run"],
+      "program": "${workspaceFolder}/start_tbr_enumeration.py",
       "cwd": "${workspaceFolder}",
       "env": {"PYTHONUTF8": "1"},
       "console": "integratedTerminal",
@@ -38,205 +35,15 @@
       "subProcess": false
     },
     {
-      "name": "a) ssn_hops environment",
+      "name": "Start: dry run",
       "type": "debugpy",
       "request": "launch",
-      "module": "ssn_hops",
-      "args": ["environment"],
+      "program": "${workspaceFolder}/start_dry_run.py",
       "cwd": "${workspaceFolder}",
-      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+      "env": {"PYTHONUTF8": "1"},
       "console": "integratedTerminal",
-      "justMyCode": false,
+      "justMyCode": true,
       "subProcess": false
-    },
-    {
-      "name": "b) experiments plan (suite_m1b_cgr)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "ssn_hops.experiments",
-      "args": [
-        "plan",
-        "--suite", "configs/suite_m1b_cgr.json",
-        "--out", "${input:planOut}",
-        "--revision", "${input:revision}"
-      ],
-      "cwd": "${workspaceFolder}",
-      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "subProcess": false
-    },
-    {
-      "name": "[POSIX/WSL2 only] c) driver.selector (read-only check of the slices)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "driver.selector",
-      "args": [
-        "--plan", "${input:planPath}",
-        "--slices", "configs/slices_m1b_cgr.json"
-      ],
-      "cwd": "${workspaceFolder}",
-      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "subProcess": false
-    },
-    {
-      "name": "[POSIX/WSL2 only] d) driver.finish check (read-only report)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "driver.finish",
-      "args": [
-        "check",
-        "--plan", "${input:planPath}"
-      ],
-      "cwd": "${workspaceFolder}",
-      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "subProcess": false
-    },
-    {
-      "name": "[POSIX/WSL2 only] e) driver.run_cell --slice (EXECUTES; heavy)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "driver.run_cell",
-      "args": [
-        "--plan", "${input:planPath}",
-        "--revision", "${input:revision}",
-        "--ledger", "${input:ledgerPath}",
-        "--slices", "configs/slices_m1b_cgr.json",
-        "--slice", "${input:sliceId}"
-      ],
-      "cwd": "${workspaceFolder}",
-      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "subProcess": false
-    },
-    {
-      "name": "[POSIX/WSL2 only] f) driver.train_unit --slice (EXECUTES training; heavy)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "driver.train_unit",
-      "args": [
-        "--plan", "${input:planPath}",
-        "--revision", "${input:revision}",
-        "--ledger", "${input:ledgerPath}",
-        "--slices", "configs/slices_m1b_cgr.json",
-        "--slice", "${input:trainSliceId}"
-      ],
-      "cwd": "${workspaceFolder}",
-      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "subProcess": false
-    },
-    {
-      "name": "[POSIX/WSL2 only] g) driver.ledger sum",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "driver.ledger",
-      "args": [
-        "sum",
-        "${input:ledgerPath}"
-      ],
-      "cwd": "${workspaceFolder}",
-      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "subProcess": false
-    },
-    {
-      "name": "h) experiments aggregate --allow-partial",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "ssn_hops.experiments",
-      "args": [
-        "aggregate",
-        "--plan", "${input:planPath}",
-        "--out", "${input:summaryOut}",
-        "--allow-partial"
-      ],
-      "cwd": "${workspaceFolder}",
-      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "subProcess": false
-    },
-    {
-      "name": "i) experiments plot --allow-partial (needs matplotlib)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "ssn_hops.experiments",
-      "args": [
-        "plot",
-        "--summary", "${input:summaryPath}",
-        "--out", "${input:plotOut}",
-        "--allow-partial"
-      ],
-      "cwd": "${workspaceFolder}",
-      "env": {"PYTHONPATH": "${workspaceFolder}/src"},
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "subProcess": false
-    }
-  ],
-  "inputs": [
-    {
-      "id": "runAllConfig",
-      "type": "promptString",
-      "description": "Config file for experiments/run_all.py (path relative to the project folder or absolute; config.yaml needs PyYAML, config.example.json does not)",
-      "default": "config.yaml"
-    },
-    {
-      "id": "planOut",
-      "type": "promptString",
-      "description": "ABSOLUTE path of a NEW directory for the plan (it must not exist yet; the plan is bound to this path)"
-    },
-    {
-      "id": "revision",
-      "type": "promptString",
-      "description": "Revision: exactly 40 LOWERCASE hex characters (the code does not read git); the same value for every command of one plan"
-    },
-    {
-      "id": "planPath",
-      "type": "promptString",
-      "description": "Path of plan.json of an existing plan: <plan root>/plan.json (use the same absolute root as at planning)"
-    },
-    {
-      "id": "ledgerPath",
-      "type": "promptString",
-      "description": "Path of the ledger file (.jsonl; events are appended; for sum: an existing ledger)"
-    },
-    {
-      "id": "sliceId",
-      "type": "pickString",
-      "description": "Slice of configs/slices_m1b_cgr.json (slices with a train step also train)",
-      "options": ["TRAIN-132", "TRAIN-REST", "TRAIN-330", "PILOT", "B1B", "B264", "B330", "CGR-PILOT", "CGR-EXT1", "CGR-EXT2", "CGR-EXT3"],
-      "default": "TRAIN-132"
-    },
-    {
-      "id": "trainSliceId",
-      "type": "pickString",
-      "description": "Training slice (a slice without a train step is refused by train_unit)",
-      "options": ["TRAIN-132", "TRAIN-REST", "TRAIN-330"],
-      "default": "TRAIN-132"
-    },
-    {
-      "id": "summaryOut",
-      "type": "promptString",
-      "description": "Path of a NEW summary JSON file (it must not exist yet)"
-    },
-    {
-      "id": "summaryPath",
-      "type": "promptString",
-      "description": "Path of an existing summary JSON file (the output of aggregate)"
-    },
-    {
-      "id": "plotOut",
-      "type": "promptString",
-      "description": "Path of a NEW directory for the figures (it must not exist yet)"
     }
   ]
 }

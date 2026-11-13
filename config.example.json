@@ -1,6 +1,6 @@
 {
   "revision": "PUT-40-LOWERCASE-HEX-COMMIT-SHA-HERE",
-  "suite": "configs/suite_m1b_cgr.json",
+  "suite": "configs/suite_paper_scope.json",
   "output_root": "outputs/run_001",
   "stages": ["plan", "train", "execute", "aggregate", "plot"],
   "plan": {
