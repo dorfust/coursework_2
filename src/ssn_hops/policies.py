@@ -349,4 +349,4 @@ class ContactRouting:
         # same key; plan_queries counts calls, not searches.
         return {"plan_queries": self.plan_queries, "contact_plan": self.plan.metadata(),
                 "replanning": "each route call, remaining TTL bounded by observation horizon",
-                "knowledge": "scheduled geometry; no future queues or random failures"}
+                "knowledge": "scheduled geometry only; no future queues or random failures"}
