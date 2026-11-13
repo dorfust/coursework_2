@@ -389,7 +389,7 @@ def validate_plan(document, expected_root=None):
         inside(root, cell["out"])
         inside(root, cell["config_path"])
     for scenario in body["scenarios"]:
-        inside(root, trace_path_placeholder := scenario["trace_path"])
+        inside(root, scenario["trace_path"])
     if len({c["id"] for c in body["cells"]}) != len(body["cells"]):
         raise ValueError("duplicate plan cell")
     if any("policies" in s for s in body["scenarios"]):
