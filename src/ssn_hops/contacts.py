@@ -1,4 +1,6 @@
 """Scheduled geometric contacts on an explicit right-continuous tick grid."""
+# A graph sampled at tick k holds on [k*dt, (k+1)*dt). A contact is [start_tick, end_tick); end_tick is
+# exclusive, and a transfer may complete exactly at end_tick (see Contact below).
 from dataclasses import dataclass
 import heapq
 import math
@@ -10,6 +12,11 @@ from .sim_config import service_ticks
 
 class GeometryNetwork:
     """One shared range/LOS predicate, with only the most recent snapshot cached."""
+    # snapshot(tick) returns the same cached (adjacency, ranges_km) pair on repeated calls for one tick, so
+    # callers must not modify the arrays. Only one tick is cached; every new tick calls graph_from_positions
+    # again. build_geometric_plan (below) does not use this class: it repeats the tick loop, so the plan
+    # and the simulator graph agree only because both call positions_km(tick * tick_s) and the same
+    # graph_from_positions arguments; a change to one of the two loops would not reach the other.
     def __init__(self, cfg):
         self.cfg = cfg.validate()
         self.trajectory = make_trajectory(cfg.orbit, cfg.phase_seed)
@@ -33,6 +40,7 @@ class Contact:
     end_tick: int  # exclusive cell end; completion exactly at this boundary allowed
 
 
+# ContactRouting uses only neighbor and departure_tick of a PlannedHop; arrival_tick is informational.
 @dataclass(frozen=True)
 class PlannedHop:
     neighbor: int
@@ -47,6 +55,12 @@ class ContactPlan:
     edge: it minimizes over all feasible departure ticks in future contacts.
     It is not Dijkstra on the current-neighbor graph. The waiting closure is
     FIFO even if tick-rounded service duration changes with departure time.
+
+    Model: time is in ticks. One hop uses one contact and lasts service_ticks(...) for the distance at its
+    departure tick; it must finish inside that contact (arrival <= contact end) and not after the deadline.
+    Waiting at a node is free and unlimited up to the deadline. Queues, busy nodes, buffers and random
+    failures are not modelled. distance_at(tick, u, v) must return kilometres. neighbors[u] lists every
+    node that shares a contact with u at any time in the horizon, not only the current neighbours.
     """
     def __init__(self, n, horizon_tick, intervals, distance_at):
         integer(n, "n", 2)
@@ -77,12 +91,14 @@ class ContactPlan:
                 self.intervals[(u, v)] = tuple(values)
                 self.neighbors[u].append(v)
                 self.neighbors[v].append(u)
+        # Sort every neighbors[u] list ascending (edges without any contact were never added to them).
         for values in self.neighbors:
             values.sort()
 
     def metadata(self):
         rows = [{"edge": list(edge), "cells": [[c.start_tick, c.end_tick] for c in values]}
                 for edge, values in sorted(self.intervals.items())]
+        # interval_sha256 is content_hash(rows); rows holds, for every edge that has contacts, the edge and its cells.
         return {"schema": "ssn-contact-grid-v1", "n": self.n,
                 "horizon_tick": self.horizon_tick, "interval_count": sum(len(v) for v in self.intervals.values()),
                 "interval_sha256": content_hash(rows),
@@ -113,6 +129,12 @@ class ContactPlan:
         BASELINE: distance_at / service_ticks are not evaluated at skipped
         departures, so invalid (negative or non-finite) distances there no longer raise.
         """
+        # Meaning in plain words: over all contacts of the edge {u, v}, take the departure >= earliest whose arrival
+        # (departure + service_ticks at the distance of that departure) is smallest and <= min(contact end, deadline);
+        # equal arrivals: the earlier departure wins. earliest_hop passes limit = the neighbour's current label.
+        # The contacts of the edge are scanned from the first one on every call (no bisect); contacts that end
+        # before 'earliest' are skipped by the start >= stop test, so the cost of a call grows with the number of
+        # contacts of the edge.
         best = None
         s_min = None
         for contact in self.intervals.get((min(u, v), max(u, v)), ()):
@@ -141,12 +163,18 @@ class ContactPlan:
         # discards the result unless next_arrival < labels[neighbor]. Passing
         # limit = labels[neighbor] makes _edge_arrival return exactly the tuples that
         # pass that strict test (and None otherwise); the update test below is kept.
+        # Plain meaning: labels[node] is the earliest ARRIVAL TICK at the node found so far; first[node] is the
+        # (first hop, departure tick) of the best path to it. The heap order is (tick, node); a label changes only on
+        # a strict improvement. None means: no feasible path with departures >= now_tick, or source == destination
+        # (no zero-hop route is returned) or now_tick is not before the deadline.
         if not 0 <= source < self.n or not 0 <= destination < self.n:
             raise ValueError("contact query endpoint out of range")
         integer(now_tick, "now_tick", 0)
         integer(deadline_tick, "deadline_tick", 0)
         if cfg.orbit.n != self.n:
             raise ValueError("contact/config N mismatch")
+        # deadline = min(deadline_tick, horizon_tick): if the packet's TTL reaches beyond the plan horizon, the
+        # search silently stops at the horizon; a destination reachable only later is answered with None.
         deadline = min(deadline_tick, self.horizon_tick)
         if source == destination or now_tick >= deadline:
             return None
@@ -161,6 +189,8 @@ class ContactPlan:
             if node == destination:
                 neighbor, departure = first[node]
                 return PlannedHop(neighbor, departure, arrival)
+            # limit = labels[neighbor]: only an arrival strictly earlier than the neighbour's current label is accepted.
+            # The source label is now_tick and a hop lasts at least one tick, so an edge back to the source is refused.
             for neighbor in self.neighbors[node]:
                 result = self._edge_arrival(node, neighbor, arrival, deadline, size_bytes, cfg,
                                             labels[neighbor])
@@ -176,6 +206,9 @@ class ContactPlan:
 
 def build_geometric_plan(cfg):
     """Stream graphs into intervals; retain positions only, never an H*N*N cube."""
+    # Covers ticks [0, horizon_tick) only: a contact still open at the last tick is closed at horizon_tick.
+    # The distance_at closure keeps the whole horizon_tick x N x 3 float64 position array alive as long as
+    # the plan exists. The loop runs horizon_tick iterations, one graph_from_positions call per tick.
     cfg.validate()
     trajectory = make_trajectory(cfg.orbit, cfg.phase_seed)
     # Position memory O(H*N); graph working memory O(N*N); contacts O(intervals).
@@ -185,6 +218,8 @@ def build_geometric_plan(cfg):
     for tick in range(cfg.horizon_tick):
         positions[tick] = trajectory.positions_km(tick * cfg.tick_s)
         adjacency, _ = graph_from_positions(positions[tick], cfg.orbit)
+        # Edges come from the strict upper triangle (np.triu(adjacency, 1)): every edge is (u, v) with u < v, as
+        # ContactPlan requires; the upper triangle loses nothing because the graph is symmetric (as stated in Simulator.run).
         current = set(zip(*np.nonzero(np.triu(adjacency, 1))))
         current = {(int(u), int(v)) for u, v in current}
         for edge in sorted(set(opened) - current):
