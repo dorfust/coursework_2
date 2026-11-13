@@ -6,6 +6,8 @@ from pathlib import Path
 from .config import OrbitConfig, _section, content_hash, integer, positive
 
 
+# Converts seconds to an integer tick count (round(seconds / dt)); accepted only if seconds / dt is within 1e-7
+# of an integer. A non-numeric, bool, non-finite or negative input, or any other value, raises ValueError.
 def ticks(seconds, dt, name="time"):
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
         raise ValueError(f"{name} must be numeric")
@@ -20,6 +22,10 @@ def ticks(seconds, dt, name="time"):
 
 def service_ticks(size_bytes, rate_bytes_s, distance_km, light_speed_km_s, dt):
     """Serialization + start-distance propagation; completion rounded UP to grid."""
+    # Result in ticks = ceil((size/rate + distance/c) / dt), at least 1. distance_km is the distance at the START
+    # of the transfer; it is not updated while the transfer runs. 1e-12 only absorbs floating-point noise at an
+    # exact tick boundary; max(1, ...) makes every hop last at least one tick. With the default packet size
+    # (18000 B) and rate (12500 B/s) the result is 15 ticks for any distance from 0 to 3500 km (hand calculation).
     positive(size_bytes, "size_bytes")
     positive(rate_bytes_s, "rate_bytes_s")
     positive(light_speed_km_s, "light_speed_km_s")
@@ -31,6 +37,13 @@ def service_ticks(size_bytes, rate_bytes_s, distance_km, light_speed_km_s, dt):
     return max(1, math.ceil(raw - 1e-12))
 
 
+# Units: tick_s, traffic_end_s, observation_end_s, arrival_interval_s and ttl_s are in seconds (tick_s is the
+# tick length); packet_bytes and buffer_bytes in bytes; rate_bytes_s in bytes per second; light_speed_km_s in
+# km/s. failure_probability is the probability that an active transfer is aborted at a given tick (a stateless
+# trial keyed by seed, edge and tick, traffic.edge_tick_failure); Simulator.run tries it only for ticks strictly
+# between start_tick and finish_tick (step 4 of its tick order). additional_retries = further attempts allowed
+# after the first failed attempt on one hop; the count is per hop, over all neighbours tried, and every abort
+# counts (link_loss too).
 @dataclass(frozen=True)
 class SimulationConfig:
     schema: str = "ssn-simulation-config-v1"

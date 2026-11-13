@@ -7,11 +7,20 @@ from .config import OrbitConfig, content_hash, integer
 
 @dataclass(frozen=True)
 class Trajectory:
+    """One realised random phase configuration (see make_trajectory).
+
+    raan_rad and plane_phase_rad hold NumPy arrays of angles in radians, one entry per plane.
+    Because the fields hold arrays, compare trajectories by trajectory_id instead of comparing
+    the objects.
+    """
     config: OrbitConfig
     seed: int
     raan_rad: np.ndarray
     plane_phase_rad: np.ndarray
 
+    # metadata() is what dataset manifests store and what trajectory_id hashes.
+    # data.validate_manifest recomputes both from the seed and compares them with the stored
+    # values, so a change to this dictionary makes manifests written earlier fail that comparison.
     def metadata(self):
         from dataclasses import asdict
         return {"orbit": asdict(self.config), "seed": self.seed,
@@ -21,12 +30,20 @@ class Trajectory:
     def trajectory_id(self):
         return content_hash(self.metadata())
 
+    # Orbital period in seconds of the circular orbit (radius in km, mu in km^3/s^2).
     @property
     def period_s(self):
         radius = self.config.earth_radius_km + self.config.altitude_km
         return 2 * math.pi * math.sqrt(radius**3 / self.config.mu_km3_s2)
 
     def positions_km(self, time_s):
+        """Node positions at time_s as an array of shape [N, 3] in km.
+
+        time_s is in seconds; any finite value is accepted, also a negative one. The frame is the
+        one named in the module docstring (ECI); no Earth rotation appears in this function.
+        Node i lies in plane i // (n // planes) at slot i % (n // planes). The phase of a node is
+        2*pi*slot/per_plane + plane_phase_rad[plane] + omega*(time_s - epoch_s), taken modulo 2*pi.
+        """
         if not math.isfinite(time_s):
             raise ValueError("time_s must be finite")
         cfg = self.config
@@ -47,6 +64,15 @@ class Trajectory:
 
 
 def make_trajectory(config, seed):
+    """Build the Trajectory for one phase seed (an int in [0, 2**32)); angles are in radians.
+
+    All randomness comes from one np.random.default_rng(seed), drawn in this order:
+    (1) a global RAAN rotation, (2) a common phase offset, (3) only if phase_mode is
+    independent_plane_offsets, one more offset per plane. The draw order therefore determines
+    the values. RAAN of plane p is 2*pi*p/planes plus the global rotation; the base phase of
+    plane p is 2*pi*walker_f*p/n plus the common offset (plus the per-plane offset in the
+    independent mode).
+    """
     config.validate()
     integer(seed, "phase seed", 0)
     if seed >= 2**32:
@@ -61,6 +87,11 @@ def make_trajectory(config, seed):
     return Trajectory(config, seed, raan, phase % (2 * np.pi))
 
 
+# Returns (adjacency, ranges): adjacency is a bool [N, N] array, symmetric with a False diagonal
+# (the last lines apply adjacency &= adjacency.T and clear the diagonal). ranges is the full
+# [N, N] distance matrix in km, not limited to linked pairs. Positions with a norm below
+# earth_radius_km raise ValueError. This file does not define the 50.4 deg mentioned in the
+# docstring.
 def graph_from_positions(positions_km, config):
     """One shared physical/advertised graph. Returns (binary adjacency, ranges_km).
 
@@ -87,6 +118,7 @@ def graph_from_positions(positions_km, config):
         # (m, 3) arrays: element-wise float64 operations plus np.sum over the last (contiguous)
         # axis of length 3, exactly the reduction the BASELINE applies to its (N, N, 3) arrays.
         # Bitwise-equality argument: Repo_Code_2/artifacts/T056/S02_CHANGED_PATHS.md section 3.
+        # The baseline and the argument file cited above are not part of this source folder.
         rows, cols = np.nonzero(adjacency)
         if rows.size:
             origin = np.ascontiguousarray(xyz[rows])

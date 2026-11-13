@@ -1,4 +1,7 @@
 """Fixed-N all-pairs reconstruction. See R3_FEATURES.md, not author architecture."""
+# Contents: GCNBranch (two GCNConv layers), HopRegressor (a low branch, a high branch and a dense
+# predictor; output [n, n]) and predict_hops (inference wrapper). n is fixed at construction: the
+# last Linear layer has n outputs, so the weights are tied to the node count and to the node-ID order.
 import numpy as np
 import torch
 from torch import nn
@@ -7,6 +10,9 @@ from .config import integer
 from .graph import branch_inputs, validate_adjacency
 
 
+# Two GCNConv layers (input_width -> width -> width) with a ReLU after each, so the outputs are
+# non-negative. The GCNConv options are the ones listed in `args`; forward takes edge_index only
+# (no edge weights). There is no dropout layer.
 class GCNBranch(nn.Module):
     def __init__(self, input_width, width, bias):
         super().__init__()
@@ -35,6 +41,7 @@ class HopRegressor(nn.Module):
         config.validate()
         self.n = n
         self.config = config
+        # Widths: see the class docstring ([A] and [A|Q]; delay mode adds N more columns for D).
         self.low_width = (2 if config.uses_delay else 1) * n
         self.high_width = (3 if config.uses_delay else 2) * n
         w = config.gcn_width
@@ -47,6 +54,15 @@ class HopRegressor(nn.Module):
         )
 
     def forward(self, low, high, edge_index):
+        """Return a float tensor of shape [n, n].
+
+        Row i is computed from the embedding of node i and column j is output coordinate j.
+        predict_hops describes its scores as [destination, candidate], so row = destination
+        and column = candidate.
+
+        Needs low of shape [n, low_width], high of shape [n, high_width] (both finite) and
+        edge_index of dtype int64 and shape [2, E]; otherwise ValueError is raised.
+        """
         if low.shape != (self.n, self.low_width) or high.shape != (self.n, self.high_width):
             raise ValueError("fixed-N branch feature shape mismatch")
         if not bool(torch.isfinite(low).all()) or not bool(torch.isfinite(high).all()):
@@ -57,6 +73,8 @@ class HopRegressor(nn.Module):
         return self.predictor(joined)
 
 
+# Switches the model to eval mode for the call and restores the previous mode afterwards (in the
+# finally block). Runs on the device of the first model parameter and returns a CPU NumPy copy.
 @torch.no_grad()
 def predict_hops(model, adjacency, ranges_km=None):
     """Finite [destination,candidate] scores.
