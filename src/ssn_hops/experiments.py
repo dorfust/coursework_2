@@ -1,4 +1,8 @@
 """Offline plans and USER-invoked sequential execution. Runtime status: not_run."""
+# Pipeline: make_plan (offline; writes the plan folder) -> train_suite (child processes: ssn_hops generate,
+# train, evaluate) -> execute_suite (child processes: ssn_hops.simulate run, one per cell) -> aggregate and
+# plot (imported only when those commands are called). In this file experiment_io.job is called only by
+# train_suite and execute_suite.
 import argparse
 from copy import deepcopy
 from dataclasses import asdict
@@ -8,11 +12,14 @@ from pathlib import Path
 import re
 from .config import content_hash, from_dict, require_supported_model
 from .experiment_io import (PLAN_SCHEMA, NATIVE_PLAN_SCHEMA, NATIVE_POLICY_NAME,
-                            digest, execution_guard, inside, job, load_plan,
-                            native_options, native_transport_check, read,
+                            ENUM_POLICY_NAME, digest, enum_options, execution_guard, inside, job,
+                            load_plan, native_options, native_transport_check, read,
                             revision, source_hashes, write)
 from .sim_config import from_sim_dict
 
+# Order matters: POLICIES[1:] (all but GLR) is the set used for baselines_only, and check_scoped_plan in
+# experiment_io.py ranks policies by this order. TBR_enumeration and the native policy are not members;
+# they are appended after these four.
 POLICIES = ("GLR", "TBR_style_hop_oracle", "TSR_source_dijkstra", "CGR_contact_plan")
 SUITE_SCHEMA = "ssn-experiment-suite-v1"
 # T057-S01 (R8, P-1): the nine required suite keys are ONE constant; the only optional key is
@@ -22,6 +29,10 @@ SUITE_REQUIRED_KEYS = frozenset({"schema", "name", "core_template", "simulation_
                                  "grids", "sensitivities"})
 SUITE_OPTIONAL_KEYS = frozenset({"policy_scope"})
 POLICY_SCOPE_FILTERS = ("n", "failure_probability", "seed_tuple_indices")
+# CONTRACT and FEATURE_CONTRACT are stored in every plan. validate_native_plan (experiment_io.py) compares
+# both with the plan's copies, so changing a value here makes saved native plans fail that check. The
+# strings are plain text; nothing in this file reads the paths named in them. simulate.py holds a second
+# FEATURE_CONTRACT with the same entries.
 CONTRACT = {"path": "Repo_Orchestrator_2/tasks/T003-sweeps.md",
             "commit": "9e52079512f0fb039955aeae7e9e0ce1102571b6", "step": "R2/A01/S02"}
 # T022-S01 paper-fidelity repair: default input set is topology-only (paper-faithful);
@@ -33,6 +44,11 @@ FEATURE_CONTRACT = {"path": "Repo_Orchestrator_2/tasks/T022-S01.md",
 
 
 def merge(base, changes):
+    """Return a deep copy of base with changes merged in, key by key.
+
+    A dict value is merged recursively into a dict already present under the same key; any other value
+    (a list included) replaces the old one as a deep copy. base itself is not modified.
+    """
     result = deepcopy(base)
     for key, value in changes.items():
         if isinstance(value, dict) and isinstance(result.get(key), dict):
@@ -43,6 +59,7 @@ def merge(base, changes):
 
 
 def name(value):
+    # 1 to 40 characters: a lowercase letter first, then lowercase letters, digits, '_' or '-'.
     if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", value):
         raise ValueError("names must be short lowercase alphanumeric identifiers")
     return value
@@ -108,6 +125,8 @@ def scope_policies(scope, n, probability, index, active):
     A policy not named in ``scope`` runs everywhere; a named policy runs iff every PRESENT filter
     contains the scenario's N, failure probability (exact ==) and seed-tuple index.
     """
+    # TBR_enumeration is never a key of policy_scope (validate_policy_scope accepts names from POLICIES only),
+    # so when it is in `active` (plan option include_tbr_enumeration) it is chosen for every scenario.
     chosen = []
     for policy in active:
         rule = scope.get(policy)
@@ -120,6 +139,13 @@ def scope_policies(scope, n, probability, index, active):
     return chosen
 
 
+# Checks, in order: key set and schema; name(); seed_tuples = a list of at least five triples
+# [phase, traffic, failure], each seed of type int (bool is not accepted) with 0 <= seed < 2**32, all seeds
+# distinct (also across the three streams) and none equal to a core train / val / test seed or core.train.seed;
+# grids and sensitivities nonempty with distinct names; each sensitivity has exactly the keys name and
+# overrides, and its overrides are limited to tick_s, rate_bytes_s, arrival_interval_s; core.validate();
+# sim.validate(); validate_policy_scope last, only if the suite has that key. Grid fields (axis, sizes,
+# probabilities) are checked in resolve_plan_inputs, not here.
 def validate_suite(suite, core, sim):
     """Validate saved resolved inputs too, without importing any ML modules."""
     if not suite_keys_valid(suite) or suite["schema"] != SUITE_SCHEMA:
@@ -159,6 +185,12 @@ def validate_suite(suite, core, sim):
 
 
 def resolve_suite(suite_path):
+    """Read the suite file and return (suite, core, sim) after validate_suite.
+
+    core_template and simulation_template are JSON files joined to the folder of the suite file
+    (suite_path.parent / value). training_overrides and simulation_overrides are merged on top of
+    them with merge.
+    """
     suite_path = Path(suite_path).resolve()
     suite = read(suite_path)
     if not suite_keys_valid(suite) or suite["schema"] != SUITE_SCHEMA:
@@ -169,19 +201,33 @@ def resolve_suite(suite_path):
     return suite, core, sim
 
 
-def resolve_plan_inputs(suite, core, sim, root, models, baselines_only, native=None):
+def resolve_plan_inputs(suite, core, sim, root, models, baselines_only, native=None, enum=None):
     """Pure resolution shared with strict native loading; legacy ordering retained.
 
     T057-S01: ONLY when the suite carries policy_scope, every scenario additionally gets
     ``policies`` (canonical POLICIES order, restricted to the policies active in this mode, i.e.
     GLR is dropped under baselines_only). Scenario ids, keys, configs and memberships do not depend
     on the scope. Trainings/models stay per N of the suite grids (scope never removes a training).
+    T125: ``enum`` (the TBR_enumeration plan metadata, or None) only appends that policy to the
+    active tuple; it changes nothing when None and is not scopable (validate_policy_scope).
     """
     scenarios = {}
     training = {}
     sizes = {}
     scope = suite.get("policy_scope")
     active = POLICIES[1:] if baselines_only else POLICIES
+    if enum is not None:
+        active = active + (ENUM_POLICY_NAME,)
+    # Loop nesting: grids -> sizes -> probabilities -> sensitivities -> seed tuples. Scenarios (and so cells
+    # and the execution order) follow the first occurrence in this nesting.
+    # A seed tuple [phase, traffic, failure] becomes phase_seed, traffic_seed, failure_seed of the scenario
+    # config; the overrides of a sensitivity variant are merged last (validate_suite limits them to tick_s,
+    # rate_bytes_s, arrival_interval_s).
+    # scenario id = "s-" + the first 16 characters of the key; a scenario found again in another grid is
+    # stored once and only gets one more entry in memberships; the full key is compared to detect an id
+    # collision.
+    # training[str(n)]: one entry per N with the planned folders <root>/training/n<N>/data and
+    # <root>/training/n<N>/run (the supplied model path is used as run when a model is supplied).
     for grid in suite["grids"]:
         if set(grid) != {"name", "axis", "sizes", "probabilities"} or grid["axis"] not in ("n", "failure_probability"):
             raise ValueError("invalid grid fields/axis")
@@ -256,13 +302,19 @@ def resolve_plan_inputs(suite, core, sim, root, models, baselines_only, native=N
     return training, list(scenarios.values())
 
 
-def plan_commands(root, training, scenarios, policies, checkout_revision, native=None):
+def plan_commands(root, training, scenarios, policies, checkout_revision, native=None, enum=None):
     """Construct exact argv without execution; mutates only resolved training steps.
 
     A scenario carrying ``policies`` (T057-S01, policy_scope plans only) gets cells for exactly that
     list; every other scenario gets one cell per entry of ``policies`` as before. Child command
-    text and out paths of a cell do not depend on the scope.
+    text and out paths of a cell do not depend on the scope. T125: a TBR_enumeration cell
+    additionally carries the two enumeration budget flags (``enum`` = plan metadata).
     """
+    # command[0] is the literal "python": experiment_io.job ignores it and starts sys.executable with command[1:].
+    # offline_steps also lists a "trace-<scenario id>" command per scenario; execute_suite does not run it
+    # through job (it writes the trace itself with make_trace and trace_document). Steps of models with
+    # supplied true are listed too; train_suite skips them. The evaluate step is fixed to --split test and
+    # --device cpu.
     commands = []
     for n, item in training.items():
         config_path = str(root / item["config_path"])
@@ -290,13 +342,18 @@ def plan_commands(root, training, scenarios, policies, checkout_revision, native
             if policy == NATIVE_POLICY_NAME:
                 command.extend(["--tbr-max-nodes", str(native["max_nodes"]),
                                 "--tbr-max-expansions", str(native["max_expansions"])])
+            if policy == ENUM_POLICY_NAME:
+                command.extend(["--enum-max-call-expansions", str(enum["max_call_expansions"]),
+                                "--enum-max-cell-expansions", str(enum["max_cell_expansions"])])
             cells.append({"id": cell_id, "scenario": scenario["id"], "policy": policy,
                           "config_path": scenario["config_path"], "out": relative_out, "command": command})
     return commands, cells
 
 
 def make_plan(suite_path, output, checkout_revision, models=None, baselines_only=False, *,
-              include_native_tbr=False, tbr_max_nodes=None, tbr_max_expansions=None):
+              include_native_tbr=False, tbr_max_nodes=None, tbr_max_expansions=None,
+              include_tbr_enumeration=False, enum_max_call_expansions=None,
+              enum_max_cell_expansions=None):
     """Write configurations/commands ONLY; no imports of torch or simulator.
 
     The five legacy positional arguments retain their meaning. New options are
@@ -304,8 +361,15 @@ def make_plan(suite_path, output, checkout_revision, models=None, baselines_only
     A suite with the optional key policy_scope (T057-S01) is rejected together with
     include_native_tbr (the native plan schema is frozen); otherwise body['policies'] is the
     union of the scenario policy lists in canonical order.
+    T125: include_tbr_enumeration (+ two budgets) adds the optional policy TBR_enumeration as
+    the LAST policy of every scenario, keeps the legacy plan schema and adds the body key
+    'tbr_enumeration'; it cannot be combined with include_native_tbr. All options off = the
+    plan of revision 3b (except the source hashes).
     """
     native = native_options(include_native_tbr, tbr_max_nodes, tbr_max_expansions)
+    enum = enum_options(include_tbr_enumeration, enum_max_call_expansions, enum_max_cell_expansions)
+    if native is not None and enum is not None:
+        raise ValueError("include_native_tbr and include_tbr_enumeration cannot be planned together")
     checkout_revision = revision(checkout_revision)
     suite, core, sim = resolve_suite(suite_path)
     if native is not None and "policy_scope" in suite:
@@ -319,15 +383,19 @@ def make_plan(suite_path, output, checkout_revision, models=None, baselines_only
     policies = list(POLICIES[1:] if baselines_only else POLICIES)
     if native is not None:
         policies.append(NATIVE_POLICY_NAME)
+    if enum is not None:
+        policies.append(ENUM_POLICY_NAME)
     models = models or {}
     if not isinstance(models, dict) or any(not isinstance(k, str) or not k.isdigit()
                                           or not isinstance(v, str) for k, v in models.items()):
         raise ValueError("models JSON must map decimal N strings to trusted complete run paths")
-    training, scenarios = resolve_plan_inputs(suite, core, sim, root, models, baselines_only, native)
+    training, scenarios = resolve_plan_inputs(suite, core, sim, root, models, baselines_only, native, enum)
     if "policy_scope" in suite:
+        # policy_scope plan: policies = those that occur in some scenario, in the order
+        # POLICIES + (TBR_enumeration,).
         declared = {policy for scenario in scenarios for policy in scenario["policies"]}
-        policies = [policy for policy in POLICIES if policy in declared]
-    commands, cells = plan_commands(root, training, scenarios, policies, checkout_revision, native)
+        policies = [policy for policy in POLICIES + (ENUM_POLICY_NAME,) if policy in declared]
+    commands, cells = plan_commands(root, training, scenarios, policies, checkout_revision, native, enum)
     body = {"suite": suite, "revision": checkout_revision, "root": str(root), "contract": CONTRACT,
             "feature_contract": FEATURE_CONTRACT,
             "mode": "baselines_only" if baselines_only else "with_trained_GLR",
@@ -337,6 +405,12 @@ def make_plan(suite_path, output, checkout_revision, models=None, baselines_only
     if native is not None:
         body["native_reference"] = native
         body["resolved_templates"] = {"core": core.to_dict(), "simulation": sim.to_dict()}
+    if enum is not None:
+        body["tbr_enumeration"] = enum
+    # Under the new plan root (root.mkdir with exist_ok=False) this writes configs/training-n<N>.json per N,
+    # configs/<scenario id>.json per scenario and plan.json (schema, body, sha256 = content_hash(body)).
+    # Commands and body["root"] hold absolute paths, so the plan folder is tied to this location:
+    # validate_plan (called by load_plan) compares the recorded root with the folder of the plan file.
     # ALL native scenario/budget validation above precedes the first mkdir/write.
     root.mkdir(parents=True, exist_ok=False)
     for item in [*training.values(), *scenarios]:
@@ -374,6 +448,13 @@ def check_model(training_cfg, scenario_configs, expected_model_config=None):
 
 
 def preflight_models(plan):
+    """Load and compare the planned GLR checkpoints before any simulation; returns {} if GLR is not planned.
+
+    For each planned N: load_trained_model on the planned run folder (device cpu, planned model config),
+    check_model with strict model equality, and a comparison with the planned feature_spec. The record
+    holds the sha256 of best.pt in that run folder, the training config hash, revision and epoch.
+    training_complete.json is not read in this function. .training is imported inside the function.
+    """
     body = plan["body"]
     if "GLR" not in body["policies"]:
         return {}
@@ -395,6 +476,14 @@ def preflight_models(plan):
 
 
 def train_suite(plan, checkout_revision):
+    """Run the planned data, train and evaluate steps of every model that was not supplied (user-invoked).
+
+    Order: execution_guard; FileExistsError if the planned run or data folder of such a model already
+    exists (partial runs cannot be resumed); write training_started.json; then for each such model the
+    steps data-n<N>, train-n<N>, evaluate-n<N> in this order through job; training_complete.json last.
+    Models with supplied true are skipped and counted. execute_suite does not require
+    training_complete.json.
+    """
     execution_guard(plan, checkout_revision)
     root = Path(plan["body"]["root"])
     unsupplied = [m for m in plan["body"]["models"].values() if not m["supplied"]]
@@ -411,6 +500,18 @@ def train_suite(plan, checkout_revision):
 
 
 def execute_suite(plan, checkout_revision):
+    """Run every planned cell one after another (user-invoked; no resume, no overwrite).
+
+    Order: execution_guard; FileExistsError if execution_started.json, runs, traces or
+    model_preflight.json already exists in the plan root; preflight_models; write model_preflight.json,
+    then execution_started.json; write each distinct trace file in this process (make_trace and
+    trace_document; the trace-... commands of offline_steps are not run here); then for each cell in plan
+    order: job, read <out>/complete.json and compare its result_sha256 with the digest of result.json
+    (ValueError if invalid); native-policy cells also get native_transport_check. execution_complete.json
+    is written last (for native-schema plans a transport-only marker with aggregation_supported false).
+    Once model_preflight.json or execution_started.json has been written, a second call on the same
+    plan root is refused by the existence check above.
+    """
     execution_guard(plan, checkout_revision)
     root = Path(plan["body"]["root"])
     # No stale run or trace reuse, even after a failed invocation.
@@ -435,6 +536,8 @@ def execute_suite(plan, checkout_revision):
         complete = read(output / "complete.json")
         if complete.get("simulation_finished") is not True or complete["result_sha256"] != digest(output / "result.json"):
             raise ValueError("child exited zero without a valid completion record")
+        # TBR_enumeration cells get only the completion check above. experiment_io.py states that
+        # verify_enum_counters in experiment_results compares their budgets and identity with the plan.
         if cell["policy"] == NATIVE_POLICY_NAME:
             native_transport_check(plan, cell, scenarios[cell["scenario"]])
     if plan["schema"] == NATIVE_PLAN_SCHEMA:
@@ -451,6 +554,7 @@ def execute_suite(plan, checkout_revision):
     return {"suite_finished": True, "runs": len(plan["body"]["cells"])}
 
 
+# simulate.py defines a function of the same name with the same body.
 def positive_cli_budget(value):
     if not re.fullmatch(r"[0-9]+", value) or int(value) <= 0:
         raise argparse.ArgumentTypeError("TBR budget must be a positive decimal integer")
@@ -467,19 +571,32 @@ def parser():
     planning.add_argument("--models", help="JSON mapping N strings to trusted complete run paths")
     planning.add_argument("--baselines-only", action="store_true")
     planning.add_argument("--include-native-tbr", action="store_true", help="opt-in bounded exhaustive transport ONLY")
+    # The numbers in the four help strings below are copies of the defaults that make_plan applies
+    # (native_options: 12 and 100000; ENUM_DEFAULT_MAX_* in experiment_io.py); simulate.py repeats the same
+    # numbers in its own help strings. default=None means that make_plan applies the default. A budget option
+    # without its --include-* switch is rejected by make_plan (ValueError).
     planning.add_argument("--tbr-max-nodes", type=positive_cli_budget, default=None,
                           help="native ONLY; independent safety bound (default 12)")
     planning.add_argument("--tbr-max-expansions", type=positive_cli_budget, default=None,
                           help="native ONLY; independent safety bound (default 100000)")
+    planning.add_argument("--include-tbr-enumeration", action="store_true",
+                          help="opt-in: add the TBR_enumeration policy (iterative-deepening full enumeration)")
+    planning.add_argument("--enum-max-call-expansions", type=positive_cli_budget, default=None,
+                          help="TBR_enumeration ONLY; per-call safety bound (default 200000)")
+    planning.add_argument("--enum-max-cell-expansions", type=positive_cli_budget, default=None,
+                          help="TBR_enumeration ONLY; per-cell safety bound (default 200000000)")
     for command in ("train", "execute"):
         child = commands.add_parser(command, help="executes only when USER invokes; creates local artifacts")
         child.add_argument("--plan", required=True)
         child.add_argument("--revision", required=True)
+    # --allow-partial and --reference are passed on to aggregate_plan (experiment_results.py), which defines
+    # their meaning. The choices of --reference include the optional TBR_enumeration and native policies.
     aggregate = commands.add_parser("aggregate", help="verify saved genuine runs and paired metrics")
     aggregate.add_argument("--plan", required=True)
     aggregate.add_argument("--out", required=True)
     aggregate.add_argument("--allow-partial", action="store_true")
-    aggregate.add_argument("--reference", choices=POLICIES + (NATIVE_POLICY_NAME,), default="TBR_style_hop_oracle")
+    aggregate.add_argument("--reference", choices=POLICIES + (NATIVE_POLICY_NAME, ENUM_POLICY_NAME),
+                           default="TBR_style_hop_oracle")
     plot = commands.add_parser("plot", help="optional lazy matplotlib; labeled reconstruction only")
     plot.add_argument("--summary", required=True)
     plot.add_argument("--out", required=True)
@@ -488,12 +605,23 @@ def parser():
 
 
 def main(argv=None):
+    """Command line of the sweep pipeline: plan, train, execute, aggregate, plot.
+
+    The mapping returned by the command is printed as JSON on stdout, only after the command has
+    returned. This function has no try/except and no sys.exit and returns None: an exception from a
+    command propagates out of main. plan reads --models as a JSON file and starts no child process; train
+    and execute start child processes through job; aggregate and plot import experiment_results and
+    experiment_plots only when they are called.
+    """
     args = parser().parse_args(argv)
     if args.command == "plan":
         result = make_plan(args.suite, args.out, args.revision,
                            read(args.models) if args.models else None, args.baselines_only,
                            include_native_tbr=args.include_native_tbr,
-                           tbr_max_nodes=args.tbr_max_nodes, tbr_max_expansions=args.tbr_max_expansions)
+                           tbr_max_nodes=args.tbr_max_nodes, tbr_max_expansions=args.tbr_max_expansions,
+                           include_tbr_enumeration=args.include_tbr_enumeration,
+                           enum_max_call_expansions=args.enum_max_call_expansions,
+                           enum_max_cell_expansions=args.enum_max_cell_expansions)
     elif args.command == "train":
         result = train_suite(load_plan(args.plan), args.revision)
     elif args.command == "execute":
