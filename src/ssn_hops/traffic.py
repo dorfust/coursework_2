@@ -7,6 +7,9 @@ from .config import content_hash, integer
 from .sim_config import ticks
 
 
+# created_tick counts ticks of cfg.tick_s seconds; size_bytes is in bytes. validate() requires
+# non-negative integer ids and ticks, distinct endpoints below cfg.orbit.n, created_tick below
+# ticks(cfg.traffic_end_s, cfg.tick_s) and size_bytes equal to cfg.packet_bytes.
 @dataclass(frozen=True)
 class TrafficRecord:
     packet_id: int
@@ -28,6 +31,14 @@ class TrafficRecord:
 
 
 def make_trace(cfg):
+    """Build the packet list: one packet per arrival tick 0, step, 2*step, ... below stop.
+
+    stop and step are the tick counts of traffic_end_s and arrival_interval_s (see ticks in
+    sim_config). Randomness: random.Random(traffic_seed). For each packet the source is drawn
+    first, then the destination from the other n-1 nodes (a draw in [0, n-1), raised by one when
+    it is not below the source). The call order is part of what determines the trace.
+    packet_id is the arrival index counted from 0 and every packet has size cfg.packet_bytes.
+    """
     cfg.validate()
     rng = random.Random(cfg.traffic_seed)
     records = []
@@ -42,6 +53,8 @@ def make_trace(cfg):
     return records
 
 
+# Returns a NEW list sorted by (created_tick, packet_id); the input list is not sorted in place.
+# Checks that every item is a TrafficRecord, validates it and rejects a repeated packet_id.
 def validate_records(records, cfg):
     ids = set()
     for record in records:
@@ -54,12 +67,18 @@ def validate_records(records, cfg):
     return sorted(records, key=lambda r: (r.created_tick, r.packet_id))
 
 
+# Returns a dict with the keys schema ("ssn-traffic-v1"), trace_key, records (dicts, in the
+# order given by validate_records) and sha256, the content_hash of the first three keys.
 def trace_document(records, cfg):
     rows = [asdict(r) for r in validate_records(records, cfg)]
     body = {"schema": "ssn-traffic-v1", "trace_key": cfg.trace_key, "records": rows}
     return {**body, "sha256": content_hash(body)}
 
 
+# Checks a loaded trace document without any file access; every failure is reported as
+# ValueError (the TypeError from TrafficRecord(**row) is converted). The last check compares
+# trace_document(records, cfg) with the input, so the stored records must already be in
+# canonical order and equal to their re-serialised form.
 def read_trace(document, cfg):
     if not isinstance(document, dict) or set(document) != {"schema", "trace_key", "records", "sha256"}:
         raise ValueError("invalid traffic document fields")
@@ -101,9 +120,15 @@ def edge_tick_failure(seed, u, v, tick, probability):
         return True
     numerator, denominator = Fraction(probability).as_integer_ratio()
     width = (denominator - 1).bit_length()
+    # The outcome depends only on seed, the unordered pair {u, v}, tick and probability. The
+    # prefix text below is part of the key, so changing it changes every outcome. No state is
+    # kept between calls.
     prefix = f"ssn-edge-tick-v1:{seed}:{min(u,v)}:{max(u,v)}:{tick}:".encode("ascii")
     # Wide denominators (e.g. subnormal floats) use more than one hash block.
     blocks = (width + 255) // 256
+    # Rejection loop: a draw of width bits is accepted only if it is below denominator. When the
+    # denominator is a power of two, width bits cover exactly denominator values, so every draw
+    # is accepted.
     attempt = 0
     while True:
         raw = b"".join(hashlib.sha256(prefix + f"{attempt}:{block}".encode("ascii")).digest()

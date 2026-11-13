@@ -1,4 +1,7 @@
 """Persist exact graph labels and whole-trajectory split manifests, no random split."""
+# A dataset directory holds train.npz, val.npz, test.npz and manifest.json. Each split is a set of
+# whole trajectories (the seeds listed in the configuration). Exact-adjacency overlap between
+# splits is only counted and compared with the stored counts; nothing here rejects an overlap.
 from itertools import combinations
 from pathlib import Path
 import hashlib
@@ -8,14 +11,25 @@ from .geometry import make_trajectory, graph_from_positions
 from .graph import shortest_hops, validate_adjacency
 from .provenance import file_sha256, provenance, read_json, write_json
 
+# Each split name needs a field <split>_seeds on cfg.data (read with getattr) and a file <split>.npz.
 SPLITS = ("train", "val", "test")
 
 
+# SHA-256 of the adjacency matrix as uint8 bytes (0/1 values); the shape is not part of the
+# hashed bytes. Used to count unique graphs and the overlap between splits.
 def adjacency_hash(array):
     return hashlib.sha256(np.asarray(array, dtype=np.uint8).tobytes()).hexdigest()
 
 
 def validate_manifest(manifest):
+    """Check a manifest dict against the configuration it carries; return the resolved config.
+
+    Only metadata is examined: this function opens no file and does not read the .npz arrays
+    (load_dataset does that). Every trajectory is recomputed from its seed with make_trajectory
+    and compared (trajectory_id, parameters, times); seeds, ids and phase tuples must not repeat
+    across splits. A mismatch raises ValueError; a missing key in a direct lookup such as
+    manifest["config"] may raise KeyError instead.
+    """
     version = manifest.get("schema_version")
     if type(version) is not int or version not in (1, 2):
         raise ValueError("unsupported dataset manifest schema")
@@ -58,9 +72,23 @@ def validate_manifest(manifest):
 
 
 def generate_dataset(cfg, output, revision):
+    """Generate the dataset into the NEW directory output and return the manifest dict.
+
+    output.mkdir(parents=True, exist_ok=False) means an existing path makes the call fail
+    (missing parents are created). For each split one archive is written with
+    np.savez_compressed (train.npz, val.npz, test.npz), each holding positions_km, adjacency,
+    target and mask stacked over the snapshots; manifest.json is written last by write_json.
+    validate_manifest runs on the manifest before it is written; the written archives are not
+    read back here (load_dataset checks them). If the run stops midway, the partly filled
+    directory stays, and because output must not exist yet it cannot be used as output again.
+    Snapshot times are start_s + i * step_s, in seconds.
+    """
     cfg.validate()
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
+    # The manifest includes the provenance block (Python and package versions, platform, and
+    # SHA-256 values of the source files of the machine that ran this), so the bytes of
+    # manifest.json can differ between machines for the same configuration.
     manifest = {"schema_version": 2, "config": cfg.to_dict(), "config_sha256": cfg.sha256,
                 "data_key": cfg.data_key, "feature_provenance": cfg.model.feature_spec,
                 "provenance": provenance(revision), "splits": {}}
@@ -100,6 +128,16 @@ def generate_dataset(cfg, output, revision):
 
 
 def load_dataset(directory, expected_config=None):
+    """Load a dataset directory and verify it completely; return (arrays by split, manifest).
+
+    Everything is checked on load, not lazily: the manifest through validate_manifest, the
+    SHA-256 and the key set of every archive, array shapes and dtypes, and for EVERY snapshot
+    the positions, the graph and the BFS labels are recomputed and compared. Saved positions
+    (km) must match the recomputed ones under np.allclose with rtol=1e-12 and atol=1e-9;
+    adjacency, labels and masks must match exactly. The recomputed graph is built from the saved
+    coordinates. Archives are opened with allow_pickle=False. expected_config, if given, is
+    compared with the manifest only through data_key.
+    """
     directory = Path(directory)
     manifest = read_json(directory / "manifest.json")
     cfg = validate_manifest(manifest)
