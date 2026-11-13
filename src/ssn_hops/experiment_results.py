@@ -6,14 +6,19 @@ from pathlib import Path
 from statistics import mean, median, stdev
 from .config import content_hash, from_dict
 from .experiment_io import (PLAN_SCHEMA, NATIVE_PLAN_SCHEMA, NATIVE_POLICY_NAME,
-                            NATIVE_RESULT_SCHEMA, digest, inside, native_transport_check,
-                            read, schema_guard, single_run_native_reference, source_hashes,
-                            validate_plan, write)
+                            NATIVE_RESULT_SCHEMA, ENUM_POLICY_NAME, digest, inside,
+                            native_transport_check, read, schema_guard,
+                            single_run_native_reference, source_hashes, validate_plan, write)
 from .sim_config import from_sim_dict
 from .traffic import read_trace
 
 SUMMARY_SCHEMA = "ssn-experiment-summary-v2"
 NATIVE_SUMMARY_SCHEMA = "ssn-native-exhaustive-experiment-summary-v1"
+# Fixed text: copied into every native summary as scientific_consumer.contract. experiment_plots rebuilds the
+# scientific_consumer record from this constant and from copies of its text strings and compares the two.
+# The same pairing exists for the transport marker record (native_completion_marker here, expected_marker there),
+# the summary label (LABEL there), the unit strings of FIELDS and the five result file names (also in
+# experiment_io.native_transport_check). If the two copies differ, plotting a native summary is refused.
 SCIENTIFIC_CONTRACT = {
     "path": "Repo_Orchestrator_2/tasks/T011-S02-native-results.md",
     "commit": "c160b0d24c9a423f93e35fd68daa2777b70c8cae",
@@ -28,6 +33,24 @@ NATIVE_COUNTERS = (
     "completed_prefix_entries", "incomplete_prefix_entries", "total_prefix_entries",
     "completed_destination_paths",
 )
+# T125: integer counters of TBR_enumeration.stats() (see tbr_enum.py); the other keys are
+# identity strings, the two budgets, completeness_share (float or None) and cell_budget_exhausted.
+ENUM_COUNTERS = (
+    "policy_calls", "complete_route", "complete_no_route", "complete_zero_hop",
+    "incomplete_call_budget", "skipped_after_cell_budget", "total_expansions",
+    "complete_expansions_sum", "complete_expansions_max", "incomplete_expansions_sum",
+    "max_depth_completed",
+)
+# The six text keys of the saved enumeration diagnostics. verify_enum_counters requires each to be a non-empty
+# string; search_identity and objective are also compared with the plan options.
+ENUM_STRING_KEYS = ("policy_identity", "search_identity", "objective", "algorithm",
+                    "budget_scope", "incomplete_rule")
+# The seven per-run values that are aggregated, with their units. Fractions are ratios of counts (for example
+# failed / generated), not percent; delays and times are in seconds; goodput is in bits per second. _verify_cell
+# takes the values from result["metrics"], except route_seconds_per_call and simulation_seconds, which come from
+# result["timing"]. delivered_fraction and delivered_median_delay_s are checked in verify_accounting but not
+# aggregated. The dict is copied into summary["field_units"]; experiment_plots compares that copy with this dict
+# for native summaries, so a changed string makes a native summary written earlier fail that comparison.
 FIELDS = {"delivered_mean_delay_s": "seconds; delivered packets only",
           "failure_fraction": "unique terminal failed/generated",
           "pending_fraction": "right-censored pending/generated",
@@ -37,6 +60,11 @@ FIELDS = {"delivered_mean_delay_s": "seconds; delivered packets only",
           "simulation_seconds": "CPU wall seconds for entire simulator.run"}
 
 
+# close(actual, expected, label): if expected is None, actual must be None; otherwise actual must be a finite int
+# or float (not bool) within math.isclose with rel_tol = abs_tol = 1e-10 of expected. It compares saved numbers
+# with recomputed ones; it is not an equality test.
+# count(value, label): returns value if it is an int (a bool is refused, because the test is type(value) is int)
+# and not negative.
 def close(actual, expected, label):
     if expected is None:
         if actual is not None:
@@ -53,6 +81,15 @@ def count(value, label):
 
 
 def describe(values):
+    """Statistics of one list of per-repetition values; None means undefined for that repetition.
+
+    n_total = len(values); n_nonnull and n_null count the values that are and are not None. mean is the
+    arithmetic mean of the non-null values. sample_sd is statistics.stdev of the non-null values (the summary
+    text calls it sample SD, ddof=1) and exists only for two or more of them. se_of_mean = sample_sd /
+    sqrt(n_nonnull): one standard error, no confidence interval. With one non-null value sample_sd and
+    se_of_mean are None; with none, mean is None as well. A None is never replaced by 0. ValueError for a
+    non-null value that is a bool, not an int or float, or not finite.
+    """
     present = [v for v in values if v is not None]
     for value in present:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -65,6 +102,18 @@ def describe(values):
 
 
 def verify_accounting(cfg, records, rows, metrics, timing, events):
+    """Cross-check one cell's saved packet table, events, metrics and timing against its paired traffic records.
+
+    ValueError on the first mismatch. Counts are compared exactly; real numbers go through close() (tolerance
+    1e-10). Seconds are ticks * cfg.tick_s; goodput is 8 * delivered_bytes / cfg.observation_end_s (bits per
+    second); fractions are count / generated (None when generated is 0). Steps in order: table rows against the
+    traffic records (ids, created_tick, source, destination, size_bytes, expiry_tick = created_tick + cfg.ttl_ticks);
+    per-row status (delivered, failed, pending) with its terminal tick, reason, admission and delay rules; metric
+    counts, fractions, mean and median delay, delivered bytes, observation window, goodput and terminal_reason_counts;
+    the event list against the table and against transfer_and_route_counts (started transfers = aborted + cancelled
+    + completed hops + pending packets with an active receiver); timing route calls, supported_device equal to cpu,
+    finite non-negative seconds and route_seconds_per_call. Returns the totals that summarize_group pools.
+    """
     if not isinstance(rows, list) or len(rows) != len(records):
         raise ValueError("packet table/traffic count mismatch")
     by_id = {r.packet_id: r for r in records}
@@ -193,6 +242,10 @@ def verify_accounting(cfg, records, rows, metrics, timing, events):
             "route_seconds": timing["route_seconds"], "delivered_bytes": delivered_bytes}
 
 
+# For every plan: schema_guard. A plan with the native schema also gets validate_plan and a comparison of
+# source_hashes() (every *.py file of the package folder as it is now) with plan["body"]["source_sha256"]; any
+# difference is a ValueError. A plan with the legacy schema gets only schema_guard in this function. _verify_cell
+# separately compares the plan's source hashes with the provenance saved by each cell.
 def scientific_plan_guard(plan):
     """Native direct callers share the accepted structural/hash/path guards."""
     schema_guard(plan)
@@ -202,6 +255,11 @@ def scientific_plan_guard(plan):
             raise ValueError("source files changed since planning; create a fresh plan")
 
 
+# `native` is plan["body"]["native_reference"]. The saved diagnostics must carry exactly the identity keys and
+# NATIVE_COUNTERS. Unlike verify_enum_counters, any incomplete or invalid search makes the cell fail here.
+# The budget_scope text compared here is "independent safety controls; not author settings"; native_options in
+# experiment_io.py builds the same sentence with NOT in capitals. This function compares it with the saved
+# diagnostics only.
 def verify_native_counters(details, native, timing, metrics):
     """Validate saved diagnostics, NOT prove execution of the declared algorithm.
 
@@ -248,7 +306,99 @@ def verify_native_counters(details, native, timing, metrics):
     return deepcopy(details)
 
 
+# Compared with the plan options: search_identity, objective, max_call_expansions, max_cell_expansions; policy_identity
+# is compared with ENUM_POLICY_NAME. algorithm, budget_scope and incomplete_rule only have to be non-empty strings
+# (their text is not compared). max_depth_completed only has to be a non-negative int. cell_budget_exhausted must be
+# a bool equal to (total_expansions > max_cell_expansions); completeness_share must match completed / policy_calls
+# (compared with close()).
+def verify_enum_counters(details, options, timing, metrics):
+    """T125: validate the saved TBR_enumeration diagnostics against the plan metadata.
+
+    Checks types, the exact key set, identity strings, the two budgets and the counter algebra
+    (see tbr_enum.TBR_enumeration.stats). Incomplete and skipped calls are ALLOWED here (they are
+    reported, not errors; contrast verify_native_counters). It does NOT prove that the declared
+    algorithm ran. Every incomplete call enters exactly max_call_expansions prefixes.
+    """
+    if not isinstance(options, dict):
+        raise ValueError("TBR_enumeration cell without plan options")
+    expected_keys = (set(ENUM_COUNTERS) | set(ENUM_STRING_KEYS)
+                     | {"max_call_expansions", "max_cell_expansions", "completeness_share",
+                        "cell_budget_exhausted"})
+    if not isinstance(details, dict) or set(details) != expected_keys:
+        raise ValueError("enumeration diagnostic fields mismatch")
+    if details["policy_identity"] != ENUM_POLICY_NAME:
+        raise ValueError("enumeration diagnostic policy identity mismatch")
+    for key in ("search_identity", "objective"):
+        if details[key] != options[key]:
+            raise ValueError(f"enumeration diagnostic identity mismatch: {key}")
+    for key in ENUM_STRING_KEYS:
+        if not isinstance(details[key], str) or not details[key]:
+            raise ValueError(f"enumeration diagnostic text missing: {key}")
+    max_call = count(details["max_call_expansions"], "enumeration max_call_expansions")
+    max_cell = count(details["max_cell_expansions"], "enumeration max_cell_expansions")
+    if max_call != options["max_call_expansions"] or max_cell != options["max_cell_expansions"]:
+        raise ValueError("enumeration diagnostic budgets differ from the plan")
+    values = {key: count(details[key], "enumeration " + key) for key in ENUM_COUNTERS}
+    completed = values["complete_route"] + values["complete_no_route"] + values["complete_zero_hop"]
+    incomplete = values["incomplete_call_budget"]
+    skipped = values["skipped_after_cell_budget"]
+    if values["policy_calls"] != completed + incomplete + skipped:
+        raise ValueError("enumeration policy-call algebra mismatch")
+    for calls in (timing["route_calls"], metrics["transfer_and_route_counts"]["route_calls"]):
+        if values["policy_calls"] != count(calls, "saved route calls"):
+            raise ValueError("enumeration policy/route-call count mismatch")
+    if values["total_expansions"] != values["complete_expansions_sum"] + values["incomplete_expansions_sum"]:
+        raise ValueError("enumeration expansion algebra mismatch")
+    if values["incomplete_expansions_sum"] != incomplete * max_call:
+        raise ValueError("enumeration incomplete calls must enter exactly max_call_expansions prefixes")
+    if not completed <= values["complete_expansions_sum"] <= completed * max_call:
+        raise ValueError("enumeration completed expansion bounds mismatch")
+    if values["complete_expansions_max"] > max_call or (completed and values["complete_expansions_max"] < 1):
+        raise ValueError("enumeration per-call maximum mismatch")
+    if type(details["cell_budget_exhausted"]) is not bool:
+        raise ValueError("enumeration exhaustion flag must be boolean")
+    if details["cell_budget_exhausted"] != (values["total_expansions"] > max_cell):
+        raise ValueError("enumeration exhaustion flag inconsistent with the cell budget")
+    if skipped and not details["cell_budget_exhausted"]:
+        raise ValueError("enumeration skipped calls without an exhausted cell budget")
+    close(details["completeness_share"], completed / values["policy_calls"] if values["policy_calls"] else None,
+          "enumeration completeness share")
+    return deepcopy(details)
+
+
+# Pooled share = completed_calls / policy_calls over all calls of the cells passed in, so each call has weight 1;
+# the equal-replicate means of the metrics give each cell (repetition) weight 1. The shares are fractions between
+# 0 and 1, None if there is no call; experiment_plots prints the pooled share as percent. completeness_share_per_cell
+# keeps the order of `records` and holds the share each cell reported (None for a cell without calls).
+# cells_with_exhausted_cell_budget counts the records whose cell_budget_exhausted is true. In aggregate_plan the
+# records are the verified diagnostics of the cells that enter the group estimates.
+def enumeration_completeness(records):
+    """T125: pooled and per-cell completeness of TBR_enumeration over verified diagnostics.
+
+    `records` are verify_enum_counters results (one per cell). A call is 'completed' when its
+    search finished (route, no route or zero hop); incomplete and skipped calls are waits.
+    """
+    calls = sum(r["policy_calls"] for r in records)
+    done = sum(r["complete_route"] + r["complete_no_route"] + r["complete_zero_hop"] for r in records)
+    return {"cells": len(records), "policy_calls": calls, "completed_calls": done,
+            "incomplete_call_budget": sum(r["incomplete_call_budget"] for r in records),
+            "skipped_after_cell_budget": sum(r["skipped_after_cell_budget"] for r in records),
+            "cells_with_exhausted_cell_budget": sum(1 for r in records if r["cell_budget_exhausted"]),
+            "total_expansions": sum(r["total_expansions"] for r in records),
+            "completeness_share_pooled": done / calls if calls else None,
+            "completeness_share_per_cell": [r["completeness_share"] for r in records],
+            "scope": "over the cells of this group that enter the estimates; an incomplete or skipped call is a wait, never a route"}
+
+
 def verify_cell(plan, cell, scenario, model_records):
+    """Verify one cell for a direct caller: return what _verify_cell returns, or raise ValueError.
+
+    scientific_plan_guard runs on every call. For a native plan the cell and the scenario must be members of
+    plan["body"] (compared by content hash) and cell["scenario"] must equal scenario["id"]; KeyError, TypeError,
+    AttributeError, OverflowError and OSError raised inside _verify_cell are re-raised as ValueError. For a
+    legacy plan _verify_cell is called directly and its exceptions are not converted. aggregate_plan calls
+    _verify_cell itself, after one scientific_plan_guard call.
+    """
     scientific_plan_guard(plan)
     if plan["schema"] == NATIVE_PLAN_SCHEMA:
         try:
@@ -263,6 +413,20 @@ def verify_cell(plan, cell, scenario, model_records):
 
 
 def _verify_cell(plan, cell, scenario, model_records):
+    """Verify one cell from its saved files: return a record, return None (the cell counts as missing) or raise ValueError.
+
+    Legacy plan: None if <out>/complete.json or logs/<id>.status.json is absent, or if the status shows a job that
+    is not successful (exit_code other than 0, or an exception recorded). Native plan: a cell with complete.json is
+    inspected whatever its status; None only if complete.json is absent, or if the full check passed and the status
+    is absent or not successful. A status must name this plan, revision and cell, and its argv[1:] must equal the
+    planned command[1:]; for a successful job the stdout and stderr hashes must match. Then, in order: complete.json
+    and result.json hashes, native_transport_check (native policy cells), result schema, policy and revision, the
+    five result files and their hashes, config, provenance, traffic and input-file hashes against the plan, the GLR
+    checkpoint identity against the preflight (other policies must claim none), verify_accounting,
+    verify_native_counters for the native policy and verify_enum_counters for TBR_enumeration. The record has the
+    keys values, totals, result_sha256, traffic_sha256 and cell, plus enumeration (TBR_enumeration cells) and
+    output_sha256, log_sha256 and native_counters (native plans).
+    """
     native_plan = plan["schema"] == NATIVE_PLAN_SCHEMA
     native_cell = native_plan and cell["policy"] == NATIVE_POLICY_NAME
     root = Path(plan["body"]["root"])
@@ -363,6 +527,11 @@ def _verify_cell(plan, cell, scenario, model_records):
     values.update({key: result["timing"][key] for key in ("route_seconds_per_call", "simulation_seconds")})
     checked = {"values": values, "totals": totals, "result_sha256": complete["result_sha256"],
                "traffic_sha256": trace["sha256"], "cell": cell["id"]}
+    if cell["policy"] == ENUM_POLICY_NAME:
+        # T125: incomplete searches are allowed and reported, never an error.
+        checked["enumeration"] = verify_enum_counters(result["policy_details"],
+                                                      plan["body"].get("tbr_enumeration"),
+                                                      result["timing"], result["metrics"])
     if native_plan:
         checked.update({"output_sha256": deepcopy(result["output_sha256"]),
                         "log_sha256": deepcopy(status["log_sha256"]),
@@ -371,6 +540,15 @@ def _verify_cell(plan, cell, scenario, model_records):
 
 
 def verify_models(plan):
+    """Return {} if GLR is not among the planned policies; otherwise check the model preflight and return its models mapping.
+
+    Reads <root>/model_preflight.json: its plan_sha256 must equal the plan hash and its set of model sizes must
+    equal the plan's. For each size, <run>/best.pt is hashed (not loaded) and must match the preflight checkpoint
+    hash; check_model (imported inside this function from experiments.py) is called with the saved training config
+    and the planned scenario configs of that size, and the sha256 of the config it returns and the feature spec must
+    equal the preflight and plan values. The returned mapping is keyed by N as a string. A missing
+    model_preflight.json is not caught here.
+    """
     if "GLR" not in plan["body"]["policies"]:
         return {}
     root = Path(plan["body"]["root"])
@@ -392,6 +570,15 @@ def verify_models(plan):
     return preflight["models"]
 
 
+# matched: a list with one {policy: verified cell record} item per repetition (one scenario); every item must hold
+# the records of the policy being summarized and of `reference`.
+# equal_replicate[field] = describe() of the per-repetition values of FIELDS: every repetition has weight 1, whatever
+# its packet count; a None is left out and counted in n_null. pooled_packet_and_call = sums over the repetitions
+# (generated, delivered, failed, pending, delay_sum_s, route_calls, route_seconds, delivered_bytes) and ratios of
+# those sums (delivered_mean_delay_s, failure_fraction, pending_fraction, nondelivery_fraction,
+# route_seconds_per_call), None when the denominator is 0; goodput and simulation_seconds are not pooled.
+# Paired differences (policies other than `reference` only): per repetition value(policy) - value(reference), None
+# if either is None, then describe(). Units: see FIELDS.
 def summarize_group(matched, policies, reference):
     """Only complete policy-matched repetitions enter ANY group estimate."""
     results = {}
@@ -441,6 +628,13 @@ def summarize_scoped_group(present, policies, reference):
 
 
 def native_completion_marker(plan):
+    """Return (finished, marker) for <root>/execution_complete.json of a native plan; (False, None) if the file is absent.
+
+    Every field must equal the expected record (schema, runs = number of planned cells, plan hash, the scope text,
+    aggregation_supported and plots_supported False) except transport_finished, which may be True or False; any
+    other difference, or a transport_finished that is not a bool, is a ValueError. The two False flags describe the
+    transport step that wrote the marker; the summary's own scientific_consumer record says aggregation_supported True.
+    """
     path = Path(plan["body"]["root"]) / "execution_complete.json"
     if not path.exists():
         return False, None
@@ -488,6 +682,19 @@ def scoped_declarations(body, scenarios):
 
 
 def aggregate_plan(plan, output, allow_partial=False, reference="TBR_style_hop_oracle"):
+    """Verify every planned cell from its saved files and write one summary JSON to `output`; return a small mapping.
+
+    Order: scientific_plan_guard; ValueError if `reference` (default TBR_style_hop_oracle) is not in body["policies"];
+    verify_models; scoped_declarations; _verify_cell for each cell in plan order (for a native plan KeyError, TypeError,
+    AttributeError, OverflowError and OSError become ValueError, for other plans they are not converted; a ValueError
+    from a cell check is raised also with allow_partial); the completion marker (native plan: native_completion_marker;
+    other plans: execution_complete.json if present, which needs suite_finished True, the plan hash and runs equal to
+    the number of cells, else ValueError); then the groups. complete = no missing cell and the marker found (native
+    plan: with transport_finished true). If not complete and allow_partial is false, ValueError and nothing is written.
+    The summary is the last thing written, by write() of experiment_io.py (mode x, exclusive creation). Paired
+    differences are policy minus reference. Returns summary (path), sha256 (digest of the file), complete, groups (a
+    count) and missing_or_failed_cells (a count; in the summary file that key is a list of cell ids).
+    """
     scientific_plan_guard(plan)
     native_plan = plan["schema"] == NATIVE_PLAN_SCHEMA
     body = plan["body"]
@@ -514,6 +721,9 @@ def aggregate_plan(plan, output, allow_partial=False, reference="TBR_style_hop_o
             missing.append(cell["id"])
             if native_plan:
                 status_path = root / "logs" / (cell["id"] + ".status.json")
+                # excluded_cells[<cell id>]: "missing job status" = no logs/<id>.status.json; "failed job" = exit_code is
+                # not 0 or an exception is recorded; otherwise "missing completion artifact". experiment_plots accepts
+                # exactly these three strings for native summaries.
                 exclusions[cell["id"]] = (
                     "missing job status" if not status_path.exists() else
                     "failed job" if read(status_path).get("exit_code") != 0 or read(status_path).get("exception") is not None else
@@ -521,6 +731,8 @@ def aggregate_plan(plan, output, allow_partial=False, reference="TBR_style_hop_o
         else:
             verified[cell["scenario"]][cell["policy"]] = value
             evidence[cell["id"]] = {"result_sha256": value["result_sha256"], "traffic_sha256": value["traffic_sha256"]}
+            if "enumeration" in value:
+                evidence[cell["id"]]["enumeration"] = value["enumeration"]
             if native_plan:
                 evidence[cell["id"]].update({key: value[key] for key in
                                              ("output_sha256", "log_sha256", "native_counters")})
@@ -537,6 +749,15 @@ def aggregate_plan(plan, output, allow_partial=False, reference="TBR_style_hop_o
     complete = not missing and finished
     if not complete and not allow_partial:
         raise ValueError(f"suite incomplete: {len(missing)} missing/failed cells; completion marker={finished}")
+    # A group is the set of scenarios that share (grid, variant, axis, x) through scenario["memberships"]; one scenario
+    # can belong to several groups. A scenario is matched when every policy needed there is verified: all of
+    # body["policies"] for an unscoped plan, the policies declared at that scenario for a scoped plan.
+    # planned_repetitions = scenarios of the group; matched_repetitions = matched ones; included_seed_tuples and
+    # excluded_seed_tuples = scenario["seeds"] of the matched and of the other scenarios. An unscoped plan passes the
+    # matched scenarios to summarize_group; a scoped plan passes the per-scenario dicts of verified cells to
+    # summarize_scoped_group. The three seeds are removed from a copy of each scenario config before comparing; the
+    # rest (the controls) must be equal across the group, else ValueError (also with allow_partial).
+    # controls["arrival_rate_packets_s"] = 1 / arrival_interval_s; the other controls are read from the first scenario.
     buckets = defaultdict(list)
     for scenario in scenarios.values():
         for member in scenario["memberships"]:
@@ -583,6 +804,15 @@ def aggregate_plan(plan, output, allow_partial=False, reference="TBR_style_hop_o
                 policy: {"planned": sum(policy in declared[s["id"]] for s in items),
                          "verified": sum(policy in verified[s["id"]] for s in items)}
                 for policy in body["policies"]}
+        if ENUM_POLICY_NAME in body["policies"]:
+            # T125: completeness of the enumeration searches over the cells that enter the estimates
+            # (matched scenarios of an unscoped plan, present scenarios of a scoped plan).
+            groups[-1]["enumeration_completeness"] = enumeration_completeness(
+                [item[ENUM_POLICY_NAME]["enumeration"]
+                 for item in (matched if declared is None else present) if ENUM_POLICY_NAME in item])
+    # label, statistics, timing_warning and authentication_limit are fixed texts; the statistics text restates what
+    # describe and summarize_group compute. experiment_plots refuses a summary whose label differs from its LABEL; for
+    # native summaries it only requires statistics, timing_warning and authentication_limit to be non-empty strings.
     document = {"schema": SUMMARY_SCHEMA, "label": "RECONSTRUCTION / NOT AUTHORS' RESULTS",
                 "complete": complete, "mode": body["mode"], "plan_sha256": plan["sha256"],
                 "declared_checkout_revision": body["revision"], "source_sha256": body["source_sha256"],
@@ -593,6 +823,10 @@ def aggregate_plan(plan, output, allow_partial=False, reference="TBR_style_hop_o
                 "statistics": "Equal-replicate means, sample SD (ddof=1), SE=SD/sqrt(non-null n); no confidence interval. Paired differences only identical scenario/seed. No-delivery delay is null; null delay pairs excluded with counts. Pooled packet delays use delivered denominator. Pending packets right-censored, never treated as zero-delay deliveries.",
                 "timing_warning": "CPU wall seconds per route call and whole-run seconds are separate. TBR_style_hop_oracle is BFS, NON-COMPARABLE to paper brute-force Fig.5.",
                 "authentication_limit": "Hashes/revisions detect accidental mismatch, not forgery. Only genuine trusted user execution supports empirical claims."}
+    # Scoped plans only: policy_scope holds a copy of the suite's policy_scope (None if the suite is not a dict), a hash
+    # of the [scenario id, declared policies] list, the declared cells per policy and the planned and verified cell
+    # counts. absent_by_design_cells = scenarios x policies - planned cells: a policy that is not declared at a scenario
+    # has no cell there and never appears in missing_or_failed_cells.
     if declared is not None:
         suite = body.get("suite")
         document["policy_scope"] = {
@@ -606,6 +840,23 @@ def aggregate_plan(plan, output, allow_partial=False, reference="TBR_style_hop_o
             "completeness_note": "complete requires every DECLARED cell verified and the completion marker; a summary of a plan whose declared cells are not all executed is PARTIAL by decision.",
             "matched_repetitions_meaning": "Per group: number of scenarios in which EVERY policy declared at that scenario is verified (equals planned_repetitions when all declared cells are verified); a group-level count, not a per-policy sample size. Per-policy sample sizes: policies[p].equal_replicate[*].n_total and groups[*].policy_cells[p].verified; paired sample sizes: paired_policy_minus_reference[p][*].n_total.",
             "statistics_note": "Policy estimates use the scenarios where the policy is declared and verified; paired differences (policy minus reference) use the scenarios where both are declared and verified; a policy without any verified cell in a group has n_total 0 and null estimates, never zeros."}
+    # Only if TBR_enumeration is a planned policy: tbr_enumeration is a copy of body["tbr_enumeration"] (the plan options:
+    # identity, the two budgets, incomplete_rule) and tbr_enumeration_note is a fixed reading text. The same policy adds
+    # groups[*].enumeration_completeness and artifact_evidence[<cell id>]["enumeration"] (the verified diagnostics).
+    if ENUM_POLICY_NAME in body["policies"]:
+        document["tbr_enumeration"] = deepcopy(body["tbr_enumeration"])
+        document["tbr_enumeration_note"] = ("TBR_enumeration is an iterative-deepening full enumeration with safety "
+                                            "budgets, NOT the paper's brute force. A search that hits a budget is "
+                                            "INCOMPLETE: the packet waits, no route is taken from partial work, and "
+                                            "no other router is used. Read groups[*].enumeration_completeness "
+                                            "before interpreting any TBR_enumeration estimate; its delay and loss "
+                                            "include the effect of those waits. Timing is whole choose-call CPU wall "
+                                            "time including incomplete calls, non-comparable to Fig.5.")
+    # Native plan: the document built above is rewritten in place. suite_completion_marker_present is removed; schema
+    # becomes NATIVE_SUMMARY_SCHEMA; timing_warning is replaced by the native text; producer_*, transport_*,
+    # planned_cells, scientifically_verified_cells, excluded_cells and scientific_consumer are added.
+    # scientific_consumer says plots_supported False (the scientific layer); experiment_plots keeps its own record,
+    # PLOT_CONSUMER, for the plot layer.
     if native_plan:
         document.pop("suite_completion_marker_present")
         document.update({
