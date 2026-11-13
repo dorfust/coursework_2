@@ -18,22 +18,34 @@ _SELF_BUILT_NETWORK_TYPE = GeometryNetwork
 
 @dataclass
 class Packet:
+    # Field notes (this file only). status: "scheduled" (before injection), then "pending" once admitted
+    # (it stays "pending" while a transfer is active), then "delivered" or "failed"; a rejected injection
+    # goes straight to "failed"; "in_transition" exists only inside _complete. expiry_tick = created_tick + cfg.ttl_ticks.
     packet_id: int
     created_tick: int
     source: int
     destination: int
     size_bytes: int
     expiry_tick: int
+    # location is the node that holds the sender copy; it changes only when a hop completes (_complete).
     location: int
     status: str = "scheduled"
     admitted: bool = False
     terminal_tick: int | None = None
     terminal_reason: str | None = None
+    # queued_tick is the local-receive FIFO key used by _schedule and audit(): created_tick at
+    # construction, then the current tick at every completed hop.
     queued_tick: int = 0
+    # visited starts as {source} and gains the receiver at every completed hop. hops counts COMPLETED hops
+    # only. hop_failures counts the failed attempts on the current hop and is reset in _complete;
+    # total_aborts is never reset.
     visited: set[int] = field(default_factory=set)
     hops: int = 0
     hop_failures: int = 0
     total_aborts: int = 0
+    # header is neither read nor written in this file; it is only copied to the result rows as "source_header".
+    # last_wait is the latest wait reason set in _schedule; it is reset to None when a transfer starts,
+    # when a hop completes and when the packet becomes terminal.
     header: list[int] | None = None
     last_wait: str | None = None
 
@@ -47,7 +59,12 @@ class Transfer:
     finish_tick: int
 
 
+# Units used in this file: time in ticks (events also carry time_s = tick * cfg.tick_s; delays are
+# reported in seconds); distances (ranges) in km; sizes in bytes; rate in bytes per second
+# (cfg.rate_bytes_s); goodput in bits per second.
 class Simulator:
+    # network must provide snapshot(tick) -> (adjacency, ranges_km); failure_sampler(seed, u, v, tick, p) -> bool.
+    # Defaults: GeometryNetwork(cfg) and traffic.edge_tick_failure.
     def __init__(self, cfg, records, policy, network=None, failure_sampler=edge_tick_failure):
         self.cfg = cfg.validate()
         self.records = validate_records(records, cfg)
@@ -77,6 +94,8 @@ class Simulator:
         self.tick = 0
         self._ran = False
 
+    # Event kinds used in this file: generated, admitted, transfer_started, transfer_aborted,
+    # transfer_cancelled, hop_completed, terminal.
     def event(self, kind, packet, **details):
         self.events.append({"tick": self.tick, "time_s": self.tick * self.cfg.tick_s,
                             "kind": kind, "packet_id": packet.packet_id, **details})
@@ -92,6 +111,9 @@ class Simulator:
         self.queues[packet.location].remove(packet.packet_id)
         self.used[packet.location] -= packet.size_bytes
 
+    # A terminal transition of a packet with an active transfer cancels the transfer (counter cancelled_transfers,
+    # event transfer_cancelled) and releases busy and reserved bytes; a stored (pending) packet is removed from
+    # its queue. A second terminal transition of the same packet raises RuntimeError.
     def _terminal(self, packet, status, reason):
         if packet.packet_id in self.terminal_ids or packet.status in ("delivered", "failed"):
             raise RuntimeError("duplicate packet terminal transition")
@@ -119,6 +141,11 @@ class Simulator:
         if packet.hop_failures > self.cfg.additional_retries:
             self._terminal(packet, "failed", "retry_exhaustion")
         # Otherwise the same sender copy can restart, from byte zero, this tick.
+        # The packet stays at the head of its sender's queue, so _schedule (same tick, unless this is the last
+        # tick of the horizon) calls choose() again (if the sender is still free when its turn comes) and the
+        # router may pick another neighbour.
+        # hop_failures is reset only in _complete, so one hop gets at most 1 + additional_retries attempts
+        # (e.g. 4 when additional_retries = 3), counted over every neighbour tried from this node.
 
     def _complete(self, packet):
         transfer = self._release_transfer(packet)
@@ -132,6 +159,10 @@ class Simulator:
         self.event("hop_completed", packet, sender=transfer.sender, receiver=transfer.receiver)
         # Temporarily not stored: terminal cannot remove a second sender copy.
         packet.status = "in_transition"
+        # Delivery is checked first. Hop limit 2 * N (reason 'hop_limit'): a safety stop of this reconstruction;
+        # no paper value is asserted, and it is not a configuration field. At the default TTL (3000 ticks, sim_config) and 15 ticks per hop (default packet
+        # size and rate) a packet completes at most 200 hops, so for N > 100 the TTL ends a wandering packet
+        # before this limit can; the limit can end a packet only if ttl_ticks >= 15 * 2N, i.e. for N <= 100 at the defaults.
         if packet.location == packet.destination:
             self._terminal(packet, "delivered", "delivered")
         elif packet.hops >= 2 * self.cfg.orbit.n:
@@ -162,6 +193,17 @@ class Simulator:
 
     def _schedule(self, adjacency, ranges):
         # Strict local-receive FIFO: only a node's head may attempt to send.
+        # Contract with the router (policy.choose is called only here): every node with a non-empty queue that is
+        # still free when its turn comes gets one choose() call per tick (a node that became busy earlier in this
+        # loop is skipped), for its head packet only, in the order (head queued_tick,
+        # packet_id, node); busy grows while the loop runs, so this order decides who gets a contested
+        # neighbour. choose() is called even when permitted is empty. permitted = neighbours adjacent now
+        # (ascending ids), not busy, with room for the packet (used + reserved + size <= buffer_bytes),
+        # evaluated when that node is served. Answers: None, a future not_before_tick, or a neighbour not in
+        # permitted all mean 'wait'; the same head is asked again at the next later tick that calls _schedule
+        # and finds its node free.
+        # An invalid neighbour, or a not_before_tick that is not an int or lies in the past, raises ValueError.
+        # Otherwise the transfer starts now. Exceptions from choose() are not caught: they end Simulator.run.
         heads = [(self.packets[q[0]].queued_tick, q[0], node)
                  for node, q in enumerate(self.queues) if q and node not in self.busy]
         for _, packet_id, node in sorted(heads):
@@ -176,6 +218,13 @@ class Simulator:
             decision = self.policy.choose(packet, context)
             self.route_seconds += perf_counter() - started
             self.counts["route_calls"] += 1
+            # last_wait strings (copied to the result rows; the counter is named in brackets):
+            #   no_route_or_no_permitted_candidate [route_wait_calls]: choose() returned None; the simulator
+            #     cannot tell 'no route' from 'no permitted candidate'.
+            #   scheduled_future_contact [future_contact_wait_calls]: not_before_tick is later than this tick.
+            #   geometric_or_contention_or_receiver_buffer [blocked_decision_calls]: the chosen neighbour is not
+            #     in permitted, i.e. no edge now, or the neighbour is busy, or its buffer has no room; the three
+            #     causes are not told apart in the output.
             if decision is None:
                 packet.last_wait = "no_route_or_no_permitted_candidate"
                 self.counts["route_wait_calls"] += 1
@@ -192,6 +241,8 @@ class Simulator:
                 packet.last_wait = "geometric_or_contention_or_receiver_buffer"
                 self.counts["blocked_decision_calls"] += 1
                 continue
+            # duration = ceil((size/rate + distance/c)/dt) ticks for the distance at the START of the transfer;
+            # finish_tick is fixed here. Later ticks re-check only that the edge still exists, not the distance.
             duration = service_ticks(packet.size_bytes, self.cfg.rate_bytes_s,
                                      float(ranges[node, decision.neighbor]),
                                      self.cfg.light_speed_km_s, self.cfg.tick_s)
@@ -204,6 +255,9 @@ class Simulator:
             self.event("transfer_started", packet, sender=node, receiver=decision.neighbor,
                        finish_tick=transfer.finish_tick, hop_failed_attempts=packet.hop_failures)
 
+    # Consistency checks of the byte accounting, queues, reservations, busy set and terminal ledger; raises
+    # RuntimeError on a mismatch. Runs after every tick when cfg.audit_each_tick is true (default) and once
+    # after the loop.
     def audit(self):
         stored = []
         for node, queue in enumerate(self.queues):
@@ -245,6 +299,9 @@ class Simulator:
         self._ran = True
         started = perf_counter()
         injection_index = 0
+        # Result of the OPT-5 note below (T056, T048 and BASELINE are task labels of the project history, not
+        # files of this export): a packet fails with reason 'ttl' only if it is 'pending' and expiry_tick <= tick,
+        # in ascending packet id; the heap only avoids scanning every packet at every tick.
         # T056 OPT-5 (DESIGN T048 Q5 O-5a). The BASELINE scanned every packet in id order at every
         # tick and terminated those with status 'pending' and expiry_tick <= tick. A packet is
         # 'pending' only between admission and its terminal transition, so only packets whose
@@ -254,6 +311,9 @@ class Simulator:
         # a later expiry) are put back after the scan; terminal ones never become pending again.
         expiry_heap = [(p.expiry_tick, pid) for pid, p in self.packets.items()]
         heapq.heapify(expiry_heap)
+        # Result of the OPT-6 note below: the per-tick snapshot checks are skipped only for the GeometryNetwork
+        # this Simulator built itself (type unchanged, no instance attribute 'snapshot'); any other network is
+        # validated at every tick.
         # T056 OPT-6. For the GeometryNetwork built by this Simulator none of the five per-tick
         # snapshot checks can fail (graph_from_positions returns an (n, n) bool matrix made
         # symmetric by `adjacency &= adjacency.T` with a cleared diagonal, and (n, n) float64 ranges
@@ -263,6 +323,20 @@ class Simulator:
         own = self._own_network
         trusted_snapshots = (own is not None and self.network is own
                              and type(own) is _SELF_BUILT_NETWORK_TYPE and "snapshot" not in vars(own))
+        # Order of one tick (ticks 0 .. horizon_tick; _schedule is not called at horizon_tick):
+        #  1. complete the active transfers with finish_tick <= tick (ascending packet id) that also finish at or
+        #     before the packet's expiry_tick, using the previous tick's geometry: the link is not re-checked here;
+        #  2. take this tick's topology snapshot (validated unless trusted_snapshots);
+        #  3. TTL scan: a 'pending' packet with expiry_tick <= tick fails with reason 'ttl' and its active
+        #     transfer, if any, is cancelled. Step 1 runs first, so a hop that finishes exactly at expiry_tick counts.
+        #     By reading, the elif branch of the scan is not reached when ttl_ticks >= 1: it could only see a
+        #     'scheduled' packet, and such a packet has created_tick >= tick, hence expiry_tick > tick;
+        #  4. each remaining active transfer is aborted with 'link_loss' if its edge is absent in the new snapshot,
+        #     else with 'edge_tick_failure' if start_tick < tick < finish_tick, failure_probability != 0 and the
+        #     failure sampler fires;
+        #  5. inject the packets with created_tick == tick (after the cancellations and aborts above);
+        #  6. _schedule, only if tick < horizon_tick;
+        #  7. audit(), if cfg.audit_each_tick.
         for tick in range(self.cfg.horizon_tick + 1):
             self.tick = tick
             # Complete using the previous cell's geometry before the new sample.
@@ -318,6 +392,9 @@ class Simulator:
         return self.result(simulation_seconds)
 
     def result(self, simulation_seconds):
+        # Fractions use all generated packets as denominator (rejected injections included). delay_s, mean and
+        # median cover delivered packets only. goodput_bits_s = 8 * delivered_bytes / observation_end_s (whole
+        # observation, not the traffic window). Packets still pending at the end are neither failed nor delivered.
         values = list(self.packets.values())
         delivered = [p for p in values if p.status == "delivered"]
         failed = [p for p in values if p.status == "failed"]
