@@ -4,6 +4,9 @@ Accepted dependency: tbr_reference.py at 6df242596c554bb50c04a01eab9599cc54f4c52
 No registration, cache, packet header, BFS fallback, timing or simulator changes.
 See TBR_NATIVE_ADAPTER.md for counter definitions and integration boundaries.
 """
+# Adapter: runs exhaustive_simple_path_reference on every choose call and turns its path into
+# Decision(path[1], tick); see tbr_reference.py. The document name and the commit hash in the docstring
+# are references only: this module does not import or read them.
 from numbers import Integral
 
 import numpy as np
@@ -69,6 +72,8 @@ class TBR_bounded_exhaustive_reference:
     def choose(self, packet, context) -> Decision | None:
         self._policy_calls += 1
         try:
+            # The search may start only with a first hop that is in permitted_neighbors and not in packet.visited;
+            # visited nodes are also blocked on the whole path. HopOracle in policies.py does not read packet.visited.
             result = exhaustive_simple_path_reference(
                 context.adjacency,
                 packet.location,
@@ -85,6 +90,8 @@ class TBR_bounded_exhaustive_reference:
                 self._incomplete_max_nodes_searches += 1
             else:  # Accepted core's only other structured reason: max_expansions.
                 self._incomplete_max_expansions_searches += 1
+            # TBRSearchIncomplete is re-raised: Simulator._schedule does not catch exceptions from choose(), so the
+            # run stops. It is never converted into a route, a drop or a fallback.
             raise  # Preserve this exact exception and details; never a route/drop.
         except ValueError:
             self._invalid_input_calls += 1

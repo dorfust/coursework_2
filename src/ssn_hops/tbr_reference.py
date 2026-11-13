@@ -3,6 +3,8 @@
 No policy registration, runtime measurement, BFS fallback or shortest-path pruning.
 See TBR_REFERENCE_SPEC.md for admissibility and the exact expansion boundary.
 """
+# TBR_REFERENCE_SPEC.md is named in the docstring above as a reference only; the admissibility rules and
+# the exact expansion boundary are stated in the docstring of exhaustive_simple_path_reference below.
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from numbers import Integral
@@ -14,6 +16,9 @@ from .features import validate_adjacency
 
 SEARCH_IDENTITY = "bounded_exhaustive_simple_paths_v1"
 OBJECTIVE = "min_edges_then_lexicographic_full_path"
+# DEFAULT_MAX_NODES = 12 and DEFAULT_MAX_EXPANSIONS = 100000 are independent safety limits, not settings
+# attributed to the authors of the paper. If the number of nodes exceeds max_nodes, the search refuses
+# before any search (TBRSearchIncomplete, reason max_nodes, zero expansions).
 DEFAULT_MAX_NODES = 12
 DEFAULT_MAX_EXPANSIONS = 100000
 
@@ -107,6 +112,11 @@ def exhaustive_simple_path_reference(
     One expansion enters one prefix, including root, dead ends and destinations.
     If another prefix remains after max_expansions entries, raise incomplete.
     Exactly max_expansions entries suffice when no prefix remains.
+    visited blocks those nodes at every step of the path (the source itself is not blocked); permitted_first_hops
+    restricts only the first step (a permitted hop that is also visited is dropped). The destination is
+    terminal. There is no pruning, so the number of prefixes entered can grow exponentially with N, which
+    is why max_expansions exists. Ties between paths of equal edge count go to the lexicographically smallest
+    path tuple.
     """
     array = validate_adjacency(adjacency)
     n = len(array)
