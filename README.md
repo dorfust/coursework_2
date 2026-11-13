@@ -1,180 +1,171 @@
-# ssn_hops: код сравнения маршрутизации GLR / TBR / TSR / CGR на моделируемом LEO-созвездии
+# ssn_hops: реконструкция сравнения маршрутизации GLR / TBR / TSR / CGR (редакция 5)
 
 ## 1. Назначение
 
-Код реконструирует сравнение алгоритмов маршрутизации GLR, TBR, TSR и CGR на моделируемом низкоорбитальном (LEO) созвездии спутников по мотивам статьи arXiv 2108.08523 (реконструкция, не исходный код авторов статьи; так написано в самом коде: «independent reconstruction»). Папка содержит: симулятор пакетной сети с квантованием времени (тик), регрессионную модель числа хопов, которую использует политика GLR, четыре политики маршрутизации, конвейер экспериментов (план, обучение, выполнение, агрегирование, графики), единую точку входа этого конвейера `experiments/run_all.py` с файлом настроек `config.yaml` (редакция 3; для запуска в нативном Windows, `docs/09_WINDOWS_RU.md`) и драйвер, который выполняет план по частям («срезам»).
+Реконструкция сравнения алгоритмов маршрутизации GLR, TBR, TSR и CGR на моделируемом низкоорбитальном (LEO) созвездии по мотивам статьи arXiv 2108.08523 (независимая реконструкция, не код авторов статьи; так написано в самом коде). Папка содержит: симулятор пакетной сети с квантованием времени, регрессионную модель числа хопов для GLR, четыре основные политики маршрутизации и две необязательные, конвейер plan → train → execute → aggregate → plot, запуск одной командой (`start.py`) и построение графиков.
 
-## 2. СТАТУС (прочитайте до использования)
+Метки в описании: «в коде написано», «вывод из чтения», «ручной расчёт», «не установлено», «ОЦЕНКА».
 
-> **Эта папка написана и описана только чтением. НИЧЕГО НЕ ЗАПУСКАЛОСЬ: авторы экспорта не выполняли ни импорт модулей, ни тесты, ни одной команды. Описание в `docs/` — статическое чтение кода; независимую проверку прошла только выборка: структура папки (96 файлов на момент этой проверки) и 60 утверждений из описания (прочитана примерно часть файлов описания) сверены с кодом; результаты — в `docs/ERRATA_RU_part3.md`. Полной независимой проверки описания нет, проверяющий был из той же модельной семьи, что и автор (согласованные ошибки возможны), и ни одна проверка не выполняла код. Фразы о статусе проверки в других файлах (например, в `docs/07_LIMITATIONS_RU.md`: «не проходило независимой проверки») отражают момент их написания; актуальный статус — здесь. Код `src/`, `driver/`, `configs/` — дословная копия исходных файлов (новые файлы редакций 2 и 3, включая `experiments/run_all.py`, копиями не являются) и может содержать дефекты, не найденные чтением. Ни одна фраза этой папки не означает, что код работает, проходит тесты или даёт какие-либо результаты. Результатов экспериментов в папке нет.**
+## 2. Статус: что выполнялось, а что нет
 
-Метки в описании: «в коде написано» — пересказ или цитата кода; «вывод из чтения» — заключение без запуска; «ручной расчёт» — арифметика, показанная в тексте.
+- Описание и код редакции 5 написаны и проверены чтением. Авторы текста ничего не запускали.
+- Пользователь один раз запустил редакцию 3a на нативном Windows (старый объём: 50 сценариев, 162 ячейки, 4 обучения). Всего 2:30:20: обучение 1:39:57, выполнение 0:50:10, агрегирование и рисунки около 12 с; все 162 из 162 ячеек прошли проверку агрегирования. Код выхода 0 не говорит о научной верности. Также пользователь один раз запустил пробу TTL (редакция 3b, N = 132).
+- Редакция 5: по сообщению пользователя, на раннере GitHub прошли все три режима — проверки, короткий прогон и полный — на дереве до позднейших правок кода и текста; после них проверки и короткий прогон повторили успешно, полный прогон не повторяли. Журналы и артефакты авторам этого текста недоступны. «Прошли» означает лишь, что задания закончились без ошибки по правилу самого рабочего процесса; это не научная верность и не запуск ни на Windows, ни на компьютере пользователя.
+- Никто не запускал редакцию 5 на компьютере пользователя (`run.cmd`, `start.py`).
+- В составе папки нет файлов результатов (`outputs/`, `summary.json`, рисунков запусков).
+- Описание `docs/01`-`docs/09` писалось чтением; независимая проверка была выборочной (`docs/ERRATA_RU_part3.md`), полной нет.
 
-Редакция 2 добавила файлы установки (`pyproject.toml`, `.gitignore`, `.vscode/`, `docs/08_VSCODE_SETUP_RU.md`, `docs/ERRATA_RU_part4.md`); утверждения этого раздела о числе файлов и о проверке описания относятся к редакции 1 (поправки — `docs/ERRATA_RU_part4.md`, разделы G и H).
+## 3. Старт одной командой
 
-Редакция 3 добавила файлы `experiments/run_all.py`, `config.yaml`, `config.example.json`, `docs/09_WINDOWS_RU.md`, `docs/ERRATA_RU_part5.md` и изменила `.vscode/settings.json`, `.vscode/launch.json`, `.vscode/extensions.json`, `pyproject.toml` (дополнение `yaml`) и этот файл. Ничего из этого не запускалось, и на момент написания эти файлы не проходили независимой проверки; поправки к формулировкам `docs/08_VSCODE_SETUP_RU.md` — в `docs/ERRATA_RU_part5.md`.
+Из папки проекта: `run.cmd` или `python start.py`. В VS Code: открыть папку, открыть `start.py`, Run Python File. Запускатели: `start_quick.py` (= `--quick`), `start_tbr_enumeration.py` (= `--tbr-enumeration --skip-main`), `start_dry_run.py` (= `--dry-run`); `.vscode/launch.json` даёт четыре конфигурации без вопросов; `ssn-hops.code-workspace` необязателен. `run.cmd`: переводы строк только LF, ни разу не запускался.
 
-## 3. Состав папки
+Что делает первый запуск (в коде написано; вывод из чтения):
+1. считает строку ревизии: 40 hex-знаков из содержимого файлов (это не коммит git);
+2. если нет `.venv`: создаёт его, ставит CPU-сборку torch (нужен интернет, загрузка большая) и `pip install -e ".[plot]"`;
+3. пишет новый JSON-конфиг в `outputs/_start`;
+4. вызывает `experiments/run_all.py` (стадии по очереди);
+5. затем `experiments/paper_style_plots.py` (не при `--quick` и `--dry-run`).
+
+SHA и PyYAML не нужны. Ничего не удаляется и не перезаписывается. Прерванный запуск продолжить нельзя: только заново, в новой папке. Подробно: `docs/11_START_AND_PLOTS_RU_partA.md`.
+
+## 4. Опции start.py
+
+| Опция | Смысл |
+|---|---|
+| `--quick` | набор `suite_quick` (3 эпохи); рисунков послешага нет; не с `--models`, `--skip-main` |
+| `--dry-run` | проверки и печать команд run_all.py; установку и запись в `outputs/_start` start.py всё же делает |
+| `--stages СПИСОК` | plan, train, execute, aggregate, plot (порядок фиксирован); не с `--tbr-enumeration` |
+| `--output-root ПУТЬ` | папка результатов (относительный путь - от текущей папки) |
+| `--revision HEX40` | 40 строчных hex-знаков вместо вычисляемой |
+| `--setup-only` / `--no-setup` | только установка и выход / без установки; вместе нельзя |
+| `--quiet` | без `--debug`: нет `run_all.log` |
+| `--models ПАПКА` | взять обученные GLR из более раннего прогона; отказ (код 2) при другом рецепте обучения, в том числе у быстрого прогона |
+| `--tbr-enumeration` | после успешного основного прогона второй запуск на `suite_tbr_enumeration` (папка = основная + `_enum`) |
+| `--skip-main` | только второй прогон (только с `--tbr-enumeration`) |
+| `--enum-call-budget N`, `--enum-cell-budget N` | бюджеты перебора; по умолчанию 200000 и 20000000; только с `--tbr-enumeration` |
+
+Коды выхода: run_all.py передаются как есть (0 успех; 2 ошибка команды или конфигурации; 3 предполётная проверка, ничего не запущено; 4 стадия упала; 130 Ctrl+C). Свои у start.py: 2 (ошибка командной строки), 10 (установка), 11 (нет Python 3.10-3.14), 12 (config.example.json или состав проекта), 13 (сбой послешага), 14 (сбой второго прогона). Подробно: `docs/11_START_AND_PLOTS_RU_partB.md`.
+
+## 5. Объём запуска и ОЦЕНКА времени
+
+| Набор (`configs/`) | сценариев / ячеек / обучений | Содержание |
+|---|---|---|
+| `suite_paper_scope.json` | 55 / 220 / 5 | N = 132, 198, 264, 330, 396 (плоскости 12-36) при p = 0,04; сетка прерываний N = 132, p = 0...0,06; по 5 наборов seed; 300 эпох; CGR в каждой ячейке |
+| `suite_quick.json` | 10 / 40 / 1 | N = 132, p = 0 и 0,04; 3 эпохи; «быстрый» не значит «короткий» |
+| `suite_tbr_enumeration.json` | 5 / 15 (без обучения) | N = 132, p = 0,04, 5 наборов seed; BFS, TSR, TBR_enumeration; CGR нигде |
+
+Числа - ручной расчёт (`docs/11_START_AND_PLOTS_RU_partC.md`).
+
+**ОЦЕНКА** полного прогона `suite_paper_scope`: 4,6 / 5,0 / 5,9 ч (оптимистично / средне / пессимистично) для ПК пользователя (Windows 10, Python 3.14, 8 потоков torch, только CPU). Это не измерение: основа - один запуск старого объёма (2:30:20); CGR при N > 132 никогда не мерился (законы роста предположены); N = 396 - экстраполяция; не учтены установка, антивирус, синхронизация папки, сон, повтор после сбоя. Продолжить прерванный запуск нельзя. Обещаний по времени нет. Длительность `--quick` не измерена. Второй прогон: худший случай (20 000 000 + 200 000) / 100 000 = 202 с на ячейку, 5 ячеек, не более 1010 с при ПРИНЯТОЙ, не измеренной скорости 100000 расширений в секунду.
+
+Бюджеты перебора: на вызов 200000; на ячейку 20000000 в `start.py` и 200000000 в библиотеке (`src/ssn_hops/tbr_enum.py`); во втором прогоне через `start.py` действуют значения `start.py`. Три новых ключа плана в `run_all.py`: `include_tbr_enumeration`, `enum_max_call_expansions`, `enum_max_cell_expansions`.
+
+## 6. Политики
+
+Основные (4): GLR; `TBR_style_hop_oracle` (поиск в ширину; на рисунках «TBR = BFS»); `TSR_source_dijkstra`; `CGR_contact_plan`. Необязательные (2, вне `POLICY_NAMES`; обе сразу включить нельзя):
+- `TBR_bounded_exhaustive_reference`: нативный исчерпывающий поиск простых путей с границами; по умолчанию N не более 12 (`max_nodes`); опция плана `--include-native-tbr`.
+- `TBR_enumeration` (новая): итеративное углубление, полный перебор простых путей; решение равно нативному эталону, если поиск завершён; бюджеты на вызов и на ячейку; неполный поиск - пакет ждёт, это считается; запасного маршрута нет; опция плана `--include-tbr-enumeration`; отдельный второй запуск. Буквальный перебор при N не менее 132 невозможен; что именно перебирает TBR статьи - не установлено: это независимая реконструкция, НЕ код статьи.
+
+Описания алгоритмов: `docs/10_ALGORITHMS_RU.md` и части.
+
+## 7. Графики
+
+Шесть графиков `plot_summary` (заголовок «RECONSTRUCTION / NOT AUTHORS' RESULTS»; доли, столбики SE). Новые, `experiments/paper_style_plots.py` (в `<папка>/paper_style`): fig3a и fig3b (задержка и потери от p, в процентах); fig4 - задержка от N столбцами в порядке GLR, TBR, CGR, TSR (цвета и штриховки описаны по рисунку 4 статьи на глаз человеком; агенты рисунка не видели); дополнительный fig4 по потерям (в статье его нет); fig5 - стоимость от N (линейная и логарифмическая шкала). Стили рисунков 3 и 5 статьи НЕИЗВЕСТНЫ. Значения не подгонялись под статью; местами направления противоположны. Подробно: `docs/11_START_AND_PLOTS_RU_partD.md`, `_partD2.md`.
+
+## 8. Состав папки
+
+Из перечней папок и описаний правок. Обозначения: [=3б] файл редакции 3b, среди изменённых не назван; [комм] добавлены только комментарии и docstring, существующие строки не менялись (по описаниям правок); [ПРАВ] изменён в редакции 5; [НОВ] новый.
 
 ```
 README.md                      этот файл
-pyproject.toml                 метаданные проекта (редакции 2-3; составлены из исходных метаданных; в редакции 3 добавлено дополнение yaml)
-.gitignore                     игнорируемые пути (редакция 2)
-.vscode/                       настройки VS Code: settings.json, extensions.json, launch.json (редакция 2; изменены в редакции 3 для Windows)
-config.yaml                    настройки для experiments/run_all.py (редакция 3)
-config.example.json            те же ключи без комментариев, для запуска без PyYAML (редакция 3)
-experiments/                   не пакет Python; не путать с модулем src/ssn_hops/experiments.py (редакция 3)
-  run_all.py                   единая точка входа plan - train - execute - aggregate - plot, только стандартная библиотека (редакция 3)
-src/ssn_hops/                  пакет, 24 файла
-  __init__.py                  docstring и __version__ = "0.1.0"
-  __main__.py                  вход `python -m ssn_hops`, передаёт управление в cli
-  cli.py                       команды environment / generate / train / evaluate
-  config.py                    конфигурации орбиты, данных, модели, обучения; проверка, хеши, JSON
-  sim_config.py                SimulationConfig, ticks(), service_ticks()
-  geometry.py                  положения спутников, видимость, смежность
-  contacts.py                  GeometryNetwork (снимок графа по тику), план контактов, earliest_hop
-  graph.py                     метки числа хопов, структура Q (1 / 0.5 / 0), входы ветвей модели
-  traffic.py                   трасса пакетов, её документ и проверка, edge_tick_failure
-  features.py                  проверка смежности и дальностей, признаки задержки
-  data.py                      генерация набора данных train/val/test и manifest.json
-  model.py                     модель предсказания хопов (torch_geometric), predict_hops
-  loss.py                      функция потерь обучения
-  training.py                  train, evaluate, load_trained_model
-  provenance.py                хеши исходников, описание среды, запись JSON с режимом "x"
-  simulator.py                 тиковый симулятор «сохранить и переслать» (store-and-forward)
-  policies.py                  GLR, HopOracle (TBR_style_hop_oracle), SourceDijkstra (TSR), ContactRouting (CGR)
-  tbr_policy.py                опциональная политика TBR_bounded_exhaustive_reference
-  tbr_reference.py             исчерпывающий поиск простых путей с границами (ядро этой политики)
-  simulate.py                  команды trace и run (одна политика, один прогон)
-  experiments.py               plan / train / execute / aggregate / plot
-  experiment_io.py             JSON, хеши, проверка плана, охрана запуска, запуск процесса
-  experiment_results.py        проверка сохранённых прогонов, агрегирование в сводку
-  experiment_plots.py          проверка сводки, рисунки PNG и данные рисунков
-driver/                        8 файлов (запуск плана по срезам)
-  __init__.py                  только docstring
-  plan_io.py                   загрузка плана и проверка привязки (корень, ревизия, хеши)
-  selector.py                  разбор файла срезов в шаги (обучение, ячейки)
-  run_cell.py                  выполнение ячеек/срезов с лимитами времени и журналом
-  train_unit.py                выполнение обучающих единиц
-  traces.py                    создание файлов трасс трафика для среза
-  finish.py                    команды preflight / marker / check
-  ledger.py                    журнал времени JSONL и команда sum
-configs/                       4 JSON
-  suite_m1b_cgr.json           файл серии (сетки, сиды, область политик)
-  n132.json                    шаблон конфигурации обучения
-  simulation_n132.json         шаблон конфигурации симуляции
-  slices_m1b_cgr.json          расписание срезов для этой серии
-docs/                          описание на русском (группы 01-07; 08_VSCODE_SETUP_RU.md; 09_WINDOWS_RU.md; ERRATA_RU.md, ERRATA_RU_part2.md, ERRATA_RU_part3.md, ERRATA_RU_part4.md, ERRATA_RU_part5.md)
+START_HERE_RU.md               в составе: новая редакция, шаги для VS Code
+start.py                       [НОВ] основной запуск
+start_quick.py, start_tbr_enumeration.py, start_dry_run.py   [НОВ]
+run.cmd                        [НОВ] запуск из cmd
+ssn-hops.code-workspace        [НОВ] необязателен
+pyproject.toml, .gitignore     [=3б]
+config.yaml, config.example.json   [=3б] называют СТАРЫЙ набор; изменение планируется
+.vscode/                       launch.json, settings.json заменены [ПРАВ]; extensions.json [=3б]
+configs/                       suite_paper_scope.json, suite_quick.json,
+                               suite_tbr_enumeration.json [НОВ];
+                               n132.json, simulation_n132.json [=3б] (шаблоны, нужны наборам)
+experiments/                   run_all.py [ПРАВ] (три новых ключа плана; DEFAULT_SUITE называет configs/suite_paper_scope.json);
+                               paper_style_plots.py [НОВ]
+probes/tbr_enum/check_tbr_enum.py       [НОВ] необязательная проверка
+probes/check_comment_only/              [НОВ] check_comment_only.py, README_RU.md; необязательная проверка
+src/ssn_hops/                  25 файлов:
+  [комм] __init__ __main__ cli config data features geometry graph loss model provenance traffic training
+  [комм] contacts policies sim_config simulator tbr_policy tbr_reference
+  [НОВ]  tbr_enum.py (с комментариями)
+  [ПРАВ] experiments experiment_io experiment_results experiment_plots simulate
+docs/                          см. раздел 12
 ```
 
-## 4. Что НЕ входит в папку
+В пяти файлах [ПРАВ] изменены регистрация и необязательная политика; в `experiments.py`, `experiment_io.py`, `experiment_plots.py`, `simulate.py` добавлены ещё комментарии, в `experiment_results.py` — комментарии и docstring.
 
-- Тесты (каталог `tests/`, эталонные реализации): в строках кода упомянуты, например, `tests/reference/contacts_ref.py`; в экспорте их нет, поэтому проверок, на которые ссылаются комментарии кода, здесь нет: в `contacts.py` комментарий называет эталонную функцию из `tests/reference/contacts_ref.py`, в `geometry.py` комментарий называет довод о побитовом равенстве ветвей в документе, не входящем в экспорт (пересказ, не цитата).
-- Инструменты анализа и построения отчётов, кроме `experiment_plots.py`.
-- Файл метаданных проекта: исходный файл метаданных в папку не входит; `pyproject.toml` редакции 2 составлен из него заново (имя, версия, диапазоны зависимостей и скрипт те же; убраны дополнение `test` и раздел `pytest`; добавлены дополнения `plot` (редакция 2) и `yaml` (редакция 3: `PyYAML>=6`, нужно только для чтения `config.yaml`); подробности — `docs/08_VSCODE_SETUP_RU.md`, раздел 3.1); **файла requirements нет**; пакет можно установить командой `pip install -e .` (не проверялось запуском) либо подключить через `PYTHONPATH` (раздел 6).
-- Другие файлы срезов и серий: код называет в строках `slices.json`, `suite_m1`, `suite_m1_nocgr` (не входит в экспорт); готового `plan.json` тоже нет.
-- Документы, которые код называет только строками (не входит в экспорт): `SIMULATION_PROTOCOL.md`, `R3_FEATURES.md`, `TBR_NATIVE_ADAPTER.md`, `TBR_NATIVE_SINGLE_RUN.md`; пути вида `Repo_Orchestrator_2/tasks/...` в словарях `CONTRACT`, `FEATURE_CONTRACT`, `NATIVE_CONTRACT`, `SCIENTIFIC_CONTRACT` и в `provenance.SOURCES` (`Repo_Research_2/artifacts/...`); `Repo_Code_2/artifacts/T056/S02_CHANGED_PATHS.md` (комментарий в `geometry.py`); метки задач и аудитов в комментариях (`T0xx`, `DESIGN T048`, `R8 addenda`) и слова «the m1 directory» в docstring драйвера. Эти строки код только записывает в документы плана и результатов; файлы по ним не читаются (вывод из чтения; подробности — в `docs/02`-`docs/06`).
+Эти шесть файлов поставляются под теми же именами: `docs/STATUS_INDEX_RU.md`, `docs/ERRATA_RU_part6.md`, `docs/06_CONFIGS_SUITES_RU.md`, новый короткий `docs/08`, часть E в `docs/05`, `START_HERE_RU.md` редакции 5.
 
-## 5. Зависимости (вывод из чтения строк `import`)
+### 8.1. Описание старой ветки (редакция 3b): в списке на удаление, удаление не выполнено
 
-- Python 3.10 или новее: в коде есть аннотации `int | None`, `list[int] | None`, `Decision | None`, вычисляемые при определении класса или функции (`simulator.py`, `tbr_policy.py`, `tbr_reference.py`).
-- Сторонние пакеты: `numpy` (напрямую его импортируют data, features, geometry, contacts, graph, model, policies, simulator, tbr_policy, tbr_reference, training), `torch` (graph, provenance и др.), `torch_geometric` (model).
-- `matplotlib`: подключается лениво, только внутри `experiment_plots.py` (команда `plot`); в метаданных исходного проекта не объявлена.
-- Версии. Диапазоны записаны в `pyproject.toml` этой папки; он составлен по прочтению метаданных исходного проекта (файл не входит в экспорт): `python >=3.10,<3.15`, `numpy>=1.26,<3`, `torch>=2.6,<3`, `torch-geometric>=2.6.1,<3`. Это пересказ прежнего чтения; исходный файл в этой папке проверить нельзя; совместимость конкретных версий не установлена.
-- `torch` нужен и командам, которые выглядят лёгкими. `provenance.py` делает `import torch` на уровне модуля (проверено по тексту файла); его импортируют `cli.py`, `data.py`, `training.py` и `simulate.py`. Поэтому `python -m ssn_hops environment` и даже `python -m ssn_hops.simulate trace` требуют установленного `torch`. Каждой команде `python -m ssn_hops` нужен и `torch_geometric`: `cli.py` на верхнем уровне импортирует `training`, `training.py` импортирует `model`, а `model.py` — `torch_geometric.nn` (цепочка `cli` → `training` → `model`), тогда как в `simulate.py` модули `model` и `training` подключаются лениво и только для политики GLR (вывод из чтения). Цепочка `config` → `sim_config` → `traffic` импортирует только стандартную библиотеку (`sim_config.py` и `traffic.py` прочитаны, `config.py` — по индексу `docs/02`); значит, команда `plan` и модули драйвера, кроме `finish preflight`, по чтению обходятся без `torch`, но `docs/05` отмечает это как не установленное. Обучение и `finish preflight` требуют `torch` (см. `docs/03`, `docs/04` часть B2, `docs/06`).
-- Драйвер сам использует только стандартную библиотеку и пакет `ssn_hops`; он рассчитан на POSIX (Linux, WSL2): `run_cell` и `train_unit` при другой ОС бросают `OSError` (по `docs/06`). Конвейер `plan` → `plot` (без драйвера) по чтению кода не содержит препятствий для нативного Windows (вывод из чтения; не запускалось): `docs/09_WINDOWS_RU.md`; сам драйвер на нативном Windows не поддерживается. Точка входа `experiments/run_all.py` использует только стандартную библиотеку (PyYAML подключается лениво и только для файла `.yaml`).
+Эти файлы входили в прежнюю версию; они не относятся к запуску `start.py`. Список подтверждён пользователем; порядок — перенос, затем удаление после проверки переноса. Не удалено ничего:
+- `driver/` (8 файлов: `plan_io`, `selector`, `run_cell`, `train_unit`, `traces`, `finish`, `ledger`, `__init__`): запуск плана по срезам; рассчитан на POSIX.
+- `configs/suite_m1b_cgr.json`: старый набор (50 сценариев, 162 ячейки, 4 обучения; CGR только при N = 132, ключ `policy_scope`).
+- `configs/slices_m1b_cgr.json`: расписание срезов к нему (нужно только драйверу).
+- `docs/06_DRIVER_CONFIGS_RU*` (17 файлов): их описание.
+- `probes/ttl`: проба TTL редакции 3b; её новые файлы (`extract_ttl.py` и README) в редакцию 5 не входят.
 
-## 6. Как код предполагается запускать (чтение; НЕ ПРОВЕРЕНО ЗАПУСКОМ)
+## 9. Что НЕ входит
 
-Нативный Windows (cmd): для стадий `plan` → `plot` есть единый вход `python experiments\run_all.py --config config.yaml` (с флагами `--dry-run` и `--debug` и параметром `--output-root`); пошаговая инструкция — `docs/09_WINDOWS_RU.md` (НЕ ЗАПУСКАЛОСЬ). Команды ниже в этом разделе записаны для bash; драйвер на нативном Windows не работает.
+- Тесты (`tests/`, эталонные реализации): комментарии кода называют, например, `tests/reference/contacts_ref.py`; в составе его нет.
+- Инструменты анализа и отчётов, кроме `experiment_plots.py` и `paper_style_plots.py`.
+- Исходный файл метаданных проекта (`pyproject.toml` составлен заново); файла requirements нет.
+- Готового `plan.json`, файлов срезов и серий, которые код называет строками (`slices.json`, `suite_m1`), документов, которые код называет только строками.
+- Строки со ссылками на внутренние записи проекта в словарях `CONTRACT`, `FEATURE_CONTRACT`, `NATIVE_CONTRACT`, `SCIENTIFIC_CONTRACT` и в `provenance.SOURCES`: код лишь записывает их в документы плана и результатов, файлы по ним не читаются.
 
-Условия, найденные при чтении (`docs/06_DRIVER_CONFIGS_RU.md`, раздел 7):
+## 10. Зависимости
 
-1. Рабочий каталог — корень экспорта (папка, где лежат `src/`, `driver/`, `configs/`); `PYTHONPATH` — абсолютный путь к `src`. Модули драйвера делают `from ssn_hops import ...`, а дочерние процессы наследуют окружение и каталог. После `pip install -e .` (редакция 2; не проверялось запуском) `PYTHONPATH` для пакета `ssn_hops` не нужен; рабочий каталог — корень — по-прежнему нужен для `python -m driver.<модуль>`; способ с `PYTHONPATH` остаётся верным без установки. Пошаговая инструкция для VS Code (Linux, WSL2) — `docs/08_VSCODE_SETUP_RU.md`; для нативного Windows (cmd) — `docs/09_WINDOWS_RU.md`.
-2. `--slices`: умолчание в `run_cell.py` и `train_unit.py` — `Path(__file__).resolve().parents[1] / "slices.json"`, то есть `slices.json` в корне экспорта; такого файла нет. Обход (вывод из чтения): `--slices configs/slices_m1b_cgr.json`. В режимах `run_cell --cell` и `train_unit --n` файл срезов не читается; у `selector` и `traces` `--slices` обязателен.
-3. План привязан к абсолютному корню: `plan_io.check_binding` требует, чтобы `body["root"]` совпадал с каталогом `plan.json`. Перенесённый или скопированный план отвергается с текстом «root mismatch»: создайте новый план в окончательном месте (каталог `--out` не должен существовать).
-4. `--revision` — строка из 40 шестнадцатеричных знаков, задаваемая вызывающим; код git не читает. Проверка в `experiment_io.revision` требует строчные буквы; во всех командах одного плана значение одно и то же.
-5. План также хранит хеши всех `*.py` пакета `ssn_hops`; при изменении файлов между планом и выполнением привязка откажет.
+- Python от 3.10 до 3.14 (`pyproject.toml`: `>=3.10,<3.15`; `start.py` перезапускает себя в подходящем Python, иначе код 11).
+- numpy >=1.26,<3; torch >=2.6,<3; torch-geometric >=2.6.1,<3 (диапазоны из прежнего чтения метаданных; совместимость конкретных версий не установлена); matplotlib подключается лениво (дополнение `plot`). `torch` нужен и «лёгким» командам: `provenance.py` импортирует его на уровне модуля, `cli.py` через `training` и `model` тянет `torch_geometric` (вывод из чтения).
+- `start.py` ставит всё сам. PyYAML нужен только для чтения `config.yaml` ручным путём.
+- Запуск 3a пользователя шёл на Windows 10, Python 3.14.10, только CPU (по журналу пользователя). Запуск редакции 5 на Windows пользователем не выполнялся.
+- Драйвер (8.1) рассчитан на POSIX.
 
-```
-# НЕ ЗАПУСКАЛОСЬ. Чтение кода. Подготовка окружения (оболочка bash):
-cd <корень экспорта>
-export PYTHONPATH="$PWD/src"
-```
+## 11. Ручной запуск (старый путь)
 
-```
-REM НЕ ЗАПУСКАЛОСЬ. Чтение кода. То же в cmd Windows (для ручных команд; run_all.py задаёт PYTHONPATH стадиям сам):
-cd <корень экспорта>
-set PYTHONPATH=%CD%\src
-```
+Ручной путь - прежний способ редакции 3, `docs/09_WINDOWS_RU.md`: создать `.venv`, `pip install -e .`, задать `--revision` из 40 строчных hex-знаков, затем `python experiments\run_all.py --config config.yaml` (флаги `--dry-run`, `--debug`, `--output-root`). `config.yaml` и `config.example.json` пока называют СТАРЫЙ набор; изменение планируется, но не сделано. `DEFAULT_SUITE` в `run_all.py` называет новый набор `configs/suite_paper_scope.json`. Для нового объёма задайте набор явно: `configs/suite_paper_scope.json`. Команды отдельных стадий: `python -m ssn_hops.experiments plan --suite configs/suite_paper_scope.json --out <новый абсолютный каталог> --revision <40 hex>` (флаги `--include-native-tbr`, `--include-tbr-enumeration`, `--enum-max-call-expansions N`, `--enum-max-cell-expansions N`), затем `train`, `execute`, `aggregate`, `plot`. Планы редакции 3b нужно составить заново: хеши исходников изменились. Команды не запускались.
 
-```
-# НЕ ЗАПУСКАЛОСЬ. Чтение cli.py: python -m ssn_hops <команда>
-python -m ssn_hops environment
-python -m ssn_hops generate --config <config.json> --out <новый каталог> --revision <40 hex>
-python -m ssn_hops train --config <config.json> --data <каталог набора> --out <новый каталог> --revision <40 hex>
-python -m ssn_hops evaluate --run <каталог прогона> --data <каталог набора> [--split train|val|test] [--device cpu] --out <новый файл.json> --revision <40 hex>
-```
+## 12. Карта документации (`docs/`)
 
-```
-# НЕ ЗАПУСКАЛОСЬ. Чтение simulate.py: python -m ssn_hops.simulate <trace|run>
-python -m ssn_hops.simulate trace --config <simulation.json> --out <новый файл.json>
-python -m ssn_hops.simulate run --config <simulation.json> --trace <файл трассы> --policy <имя> --out <новый каталог> --revision <40 hex> [--checkpoint-run <каталог прогона обучения>] [--p <вероятность>] [--rate-bytes-s <число>] [--tbr-max-nodes N] [--tbr-max-expansions N]
-# имя политики: GLR | TBR_style_hop_oracle | TSR_source_dijkstra | CGR_contact_plan | TBR_bounded_exhaustive_reference
-# --checkpoint-run нужен только для GLR (код отказывает в остальных случаях)
-```
+- `01`-`05`, `07`, `09`: описание кода редакции 3b (много неизменно): `01_ARCHITECTURE_RU`, `02_ENVIRONMENT_RU`, `03_LEARNING_RU`, `04_SIMULATION_POLICIES_RU`, `05_EXPERIMENTS_RU`, `07_LIMITATIONS_RU` (ограничения), `09_WINDOWS_RU` (старый путь). У каждой группы есть индекс (`..._RU.md`) и части (`_part1`, `_partA1` и т. п.).
+- `06_DRIVER_CONFIGS_RU*` (Linux, WSL2, драйвер): описание старой ветки (8.1). Новый короткий `08` — `08_VSCODE_SETUP_RU.md`, в составе.
+- `10_ALGORITHMS_RU.md` (индекс) и части `partA`, `partB`, `partC`, `partC2`, `partD`, `partD2`, `partE`, `partE2`: TSR, TBR (BFS), TBR_enumeration, CGR, GLR.
+- `11_START_AND_PLOTS_RU.md` (индекс) и части: `partA` запуск, `partB` опции, `partC` наборы и время, `partD`, `partD2` графики, `partE` две проверки.
+- `ERRATA_RU.md`, `ERRATA_RU_part2.md`-`part6.md`: история поправок; часть 6 — два файла: `ERRATA_RU_part6.md` и продолжение `ERRATA_RU_part6_part2.md`.
+- `STATUS_INDEX_RU.md` (статус каждого файла), `06_CONFIGS_SUITES_RU.md`, часть E в `05` — в составе.
 
-```
-# НЕ ЗАПУСКАЛОСЬ. Чтение experiments.py: python -m ssn_hops.experiments <plan|train|execute|aggregate|plot>
-python -m ssn_hops.experiments plan --suite configs/suite_m1b_cgr.json --out <новый абсолютный каталог> --revision <40 hex> [--models <файл.json>] [--baselines-only] [--include-native-tbr] [--tbr-max-nodes N] [--tbr-max-expansions N]
-python -m ssn_hops.experiments train --plan <корень>/plan.json --revision <40 hex>
-python -m ssn_hops.experiments execute --plan <корень>/plan.json --revision <40 hex>
-python -m ssn_hops.experiments aggregate --plan <корень>/plan.json --out <новый файл.json> [--allow-partial] [--reference <имя политики>]
-python -m ssn_hops.experiments plot --summary <файл сводки.json> --out <новый каталог> [--allow-partial]
-```
+Порядок чтения: этот файл, `START_HERE_RU.md`, `docs/11`, `docs/10`, затем `docs/01` и нужные группы, `docs/07`. По перечням папок: 64 файла описания редакции 3b (в том числе 17 файлов `06`) — счёт по ПРЕЖНЕМУ описанию; что поставляет эта папка — в `docs/STATUS_INDEX_RU.md`.
 
-Поставляемый `configs/suite_m1b_cgr.json` содержит ключ `policy_scope`, а `plan` с флагом `--include-native-tbr` отвергает серию с этим ключом (в `experiments.make_plan` написано: «policy_scope is not supported by native plans (native schema is frozen)»), поэтому команда `plan` с `--include-native-tbr` и этим файлом серии по чтению откажет (вывод из чтения, команда не запускалась).
+## 13. Проверки, которые запускает пользователь (необязательно)
 
-```
-# НЕ ЗАПУСКАЛОСЬ. Чтение docstring и argparse драйвера (docs/06, раздел 6); --slices дан явно (см. пункт 2)
-python -m driver.run_cell --plan <корень>/plan.json --revision <40 hex> --ledger L.jsonl --slices configs/slices_m1b_cgr.json --slice PILOT
-python -m driver.run_cell --plan <корень>/plan.json --revision <40 hex> --ledger L.jsonl --cell <id ячейки> [--counted] [--cap-minutes M]
-python -m driver.run_cell --plan <корень>/plan.json --revision <40 hex> --ledger L.jsonl --slices configs/slices_m1b_cgr.json --slice B1B --cells-only --cap-minutes C --wall-minutes W
-python -m driver.train_unit --plan <корень>/plan.json --revision <40 hex> --ledger L.jsonl --slices configs/slices_m1b_cgr.json --slice TRAIN-132
-python -m driver.train_unit --plan <корень>/plan.json --revision <40 hex> --ledger L.jsonl --n 132 [--counted]
-python -m driver.selector --plan <корень>/plan.json --slices configs/slices_m1b_cgr.json [--slice ID]
-python -m driver.traces --plan <корень>/plan.json --revision <40 hex> --ledger L.jsonl --slices configs/slices_m1b_cgr.json --slice ID
-python -m driver.finish preflight --plan <корень>/plan.json --revision <40 hex>
-python -m driver.finish marker    --plan <корень>/plan.json --revision <40 hex>
-python -m driver.finish check     --plan <корень>/plan.json [--revision <40 hex>] [--deep]
-python -m driver.ledger sum LEDGER.jsonl [LEDGER2.jsonl ...] [--json]
-```
+- `probes/tbr_enum/check_tbr_enum.py`: эквивалентность `TBR_enumeration` нативному эталону.
+- `probes/check_comment_only/check_comment_only.py`: добавленные комментарии не меняют программу.
+- Описание обеих: `docs/11_START_AND_PLOTS_RU_partE.md`. Пользователь на своём компьютере их не запускал.
 
-Шесть модулей драйвера с охраной точки входа: `run_cell`, `train_unit`, `selector`, `traces`, `finish`, `ledger`; у `plan_io.py` и `__init__.py` её нет. Команды записывают файлы (планы, трассы, журналы, результаты) и запускают тяжёлые вычисления; в корне, где это выполняется, нужны свободное место и время. Порядок срезов по файлу `slices_m1b_cgr.json`: `TRAIN-132`, `TRAIN-REST`, `TRAIN-330`, затем ячейки `PILOT`, `B1B`, `B264`, `B330`, затем ячейки CGR `CGR-PILOT`, `CGR-EXT1`, `CGR-EXT2`, `CGR-EXT3` (подробно — `docs/01_ARCHITECTURE_RU.md` и `docs/06`).
+Проверка в GitHub Actions: рабочий процесс хранится в другом (закрытом) репозитории, в состав этой папки не входит; журналы его запусков здесь не хранятся. Собранное для него дерево может отличаться от этой папки комментариями, добавленными позже.
 
-**Бюджета в 700 минут драйвер не обеспечивает.** `ledger.py` ведёт журнал (`Ledger.record` дописывает событие в файл) и суммирует минуты (`ledger sum`), константы-предела и сравнения суммы с пределом в нём нет (файл прочитан целиком); число 700 не встречается ни в одном файле драйвера по чтению (`docs/06`, часть D2). Есть лишь лимиты на отдельную ячейку (`--cap-minutes`), на обучающую единицу (по умолчанию 120 минут, `train_cap_minutes`) и на «стену» запуска (`--wall-minutes`); суммарный бюджет вызывающий должен контролировать сам по выводу `ledger sum`.
+## 14. Ограничения
 
-## 7. Порядок чтения и состав `docs/`
+- Реконструкция, не код авторов; что именно перебирает TBR статьи - не установлено.
+- Графики не похожи на рисунки статьи численно; стили рисунков 3 и 5 статьи неизвестны.
+- Никто не запускал редакцию 5 на компьютере пользователя; по сообщению пользователя полный режим шёл только на раннере GitHub, на дереве до позднейших правок, его результаты (числа и артефакты) авторам этого текста недоступны, а на дереве после этих правок полного прогона нет.
+- Время 4,6 / 5,0 / 5,9 ч - ОЦЕНКА; CGR при N > 132 не мерился.
+- Прерванный запуск продолжить нельзя.
+- Планы редакции 3b нужно составить заново (изменился `source_sha256`).
+- Старые ограничения - `docs/07_LIMITATIONS_RU.md`; открытые вопросы запуска - `docs/11_START_AND_PLOTS_RU_partC.md`, раздел 4.
 
-Рекомендуемый порядок: `docs/01_ARCHITECTURE_RU.md` (вся система целиком), затем группы 02-06 по мере интереса, затем `docs/07_LIMITATIONS_RU.md` и `docs/ERRATA_RU.md`; для установки и запуска — `docs/08_VSCODE_SETUP_RU.md` (Linux, WSL2, драйвер) или `docs/09_WINDOWS_RU.md` (нативный Windows). Каждая группа имеет файл-индекс и файлы-части в той же папке.
+## 15. Что можно проверить
 
-| Группа | Модули | Файл-индекс | Файлов-частей |
-|---|---|---|---|
-| 01 | вся система: слои, зависимости, потоки данных, модель времени | `docs/01_ARCHITECTURE_RU.md` | 3 (`_part1`-`_part3`) |
-| 02 | `config`, `sim_config`, `geometry`, `contacts`, `graph`, `traffic` | `docs/02_ENVIRONMENT_RU.md` | 8 |
-| 03 | `features`, `data`, `model`, `loss`, `training`, `provenance`, `cli`, `__main__`, `__init__` | `docs/03_LEARNING_RU.md` | 3 |
-| 04 | `simulator`, `policies`, `tbr_policy`, `tbr_reference`, `simulate` | `docs/04_SIMULATION_POLICIES_RU.md` | 5 (A1-A3, B1-B2) |
-| 05 | `experiments`, `experiment_io`, `experiment_results`, `experiment_plots` | `docs/05_EXPERIMENTS_RU.md` | 15 (A1-A3, B1-B3, C1-C5, D1-D4) |
-| 06 | 8 файлов `driver/` и 4 файла `configs/` | `docs/06_DRIVER_CONFIGS_RU.md` | 16 (A1-A5, B1-B4, C1-C4, D1-D3) |
-| 07 | ограничения и неустановленное по всей системе | `docs/07_LIMITATIONS_RU.md` | 1 файл, без частей |
-| 08 | установка и запуск в VS Code в Linux / WSL2 (для драйвера): окружение, `pip install -e .`, конфигурации запуска, разбор сбоев (редакция 2; поправки — `docs/ERRATA_RU_part5.md`) | `docs/08_VSCODE_SETUP_RU.md` | 1 файл, без частей |
-| 09 | нативный Windows: zip с GitHub, cmd, `experiments/run_all.py`, `config.yaml`, разбор сбоев (редакция 3; НЕ ЗАПУСКАЛОСЬ) | `docs/09_WINDOWS_RU.md` | 1 файл, без частей |
-| — | оговорки в формулировках и наблюдения при чтении | `docs/ERRATA_RU.md` | 5 файлов (`ERRATA_RU.md`, `ERRATA_RU_part2.md`, `ERRATA_RU_part3.md`, `ERRATA_RU_part4.md`, `ERRATA_RU_part5.md`) |
-
-В группах 02-06 вместе 52 файла (индексы и части; ручной подсчёт по перечню `docs/`: 9 + 4 + 6 + 16 + 17); группа 01 — индекс и три части.
-
-Оговорки в формулировках отдельных частей (там, где часть описания уточнена позже) собраны в `docs/ERRATA_RU.md` (индекс и раздел A: таблица поправок); наблюдения о возможных дефектах кода, найденные чтением (раздел B: нейтральный перечень, не список дефектов), и пункты, которые описание называет проверяемыми, но которые не проверены (раздел C), — в `docs/ERRATA_RU_part2.md`. Ограничения реконструкции и папки, платформенные и поведенческие ограничения, сводный список того, что чтением не установлено, и перечень того, что читателю стоит проверить самому, — в `docs/07_LIMITATIONS_RU.md`. Поправки, сделанные после независимой выборочной проверки описания по коду, собраны в `docs/ERRATA_RU_part3.md`: раздел D (поправки к формулировкам), раздел E (ответы на пункты раздела C, решённые чтением), раздел F (нейтральные заметки). Поправки редакций 2 и 3 — в `docs/ERRATA_RU_part4.md` и `docs/ERRATA_RU_part5.md`. Все названные в этом абзаце файлы лежат в `docs/` и названы по точным именам.
-
-## 8. Что можно проверить
-
-Файлы кода (`src/`, `driver/`, `configs/`) заявлены как дословная копия исходных. Файлы редакций 2 и 3 (`experiments/run_all.py`, `config.yaml`, `config.example.json`, `pyproject.toml`, `.gitignore`, `.vscode/`, `README.md`, `docs/08`, `docs/09`, `docs/ERRATA_RU_part4.md`, `docs/ERRATA_RU_part5.md`) копиями исходных не являются: это новые файлы. Тот, кто делал экспорт, может сравнить git blob SHA каждого файла с исходным репозиторием; список таких SHA хранится вне этой папки. Получатель без доступа к исходному репозиторию сделать это не может. Хеш-привязку плана к исходникам (`source_sha256`) код проверяет сам, но только относительно файлов, лежащих рядом с `experiment_io.py`.
+- Побайтово совпадающих с прежней выгрузкой файлов в `src/ssn_hops/` нет: в каждом есть правка редакции 5 (в 19 - только комментарии и docstring). Проверка «комментарии не меняют программу» - `check_comment_only` (раздел 13).
+- Код хеширует `*.py` пакета (`source_sha256`): после любой правки, даже комментария, план нужно составлять заново.
+- Строка ревизии `start.py` выводится из содержимого файлов и меняется при изменении файлов состава.
+- Файлы, новые в редакциях 2-5 (`experiments/`, `start*.py`, `run.cmd`, `.vscode/`, наборы, пробы, `docs/08`-`docs/11`, `ERRATA_RU_part4.md`, `part5.md`), копиями исходных не являются. Список git blob SHA прежней выгрузки хранится вне этой папки.
