@@ -1,4 +1,8 @@
 """User-run single simulation CLI; sweep entry point is ssn_hops.experiments."""
+# Commands: trace writes a traffic file; run runs one policy on one trace into a new output folder.
+# SINGLE_POLICY_NAMES holds the names of POLICY_NAMES (imported from policies.py), the native
+# bounded-exhaustive reference and TBR_enumeration. The files that run writes are listed in the
+# docstring of run_single.
 import argparse
 from dataclasses import asdict, replace
 import json
@@ -11,6 +15,8 @@ from .policies import POLICY_NAMES, ContactRouting, GLR, HopOracle, SourceDijkst
 from .provenance import file_sha256, provenance, read_json, write_json
 from .sim_config import load_sim_config
 from .simulator import simulate
+from .tbr_enum import (DEFAULT_MAX_CALL_EXPANSIONS, DEFAULT_MAX_CELL_EXPANSIONS,
+                       POLICY_NAME as ENUM_POLICY_NAME, TBR_enumeration)
 from .tbr_policy import TBR_bounded_exhaustive_reference
 from .tbr_reference import (
     DEFAULT_MAX_EXPANSIONS, DEFAULT_MAX_NODES, OBJECTIVE, SEARCH_IDENTITY,
@@ -29,7 +35,9 @@ FEATURE_CONTRACT = {"path": "Repo_Orchestrator_2/tasks/T022-S01.md",
 RESULT_SCHEMA = "ssn-simulation-result-v2"
 NATIVE_POLICY_NAME = TBR_bounded_exhaustive_reference.name
 # ONLY this command opts in. Do not extend legacy POLICY_NAMES or suite defaults.
-SINGLE_POLICY_NAMES = POLICY_NAMES + (NATIVE_POLICY_NAME,)
+# T125: the optional TBR_enumeration policy is registered here too (single-run command only;
+# the experiment plans add it only through the plan option include_tbr_enumeration).
+SINGLE_POLICY_NAMES = POLICY_NAMES + (NATIVE_POLICY_NAME, ENUM_POLICY_NAME)
 NATIVE_RESULT_SCHEMA = "ssn-native-exhaustive-simulation-result-v1"
 NATIVE_CONTRACT = {"path": "Repo_Orchestrator_2/tasks/T011-S02-native-command.md",
                    "commit": "aae9530aa612972b77a854e893c0c02205288f52",
@@ -37,6 +45,7 @@ NATIVE_CONTRACT = {"path": "Repo_Orchestrator_2/tasks/T011-S02-native-command.md
                    "step": "R3/A08/S02B1B"}
 
 
+# Accepts 40 hexadecimal digits in either case and returns them in lower case.
 def revision(value):
     if not re.fullmatch(r"[0-9a-fA-F]{40}", value):
         raise argparse.ArgumentTypeError("record the actual 40-character checkout SHA")
@@ -65,6 +74,18 @@ def parser():
                      help="native ONLY; independent safety bound (native default 12)")
     run.add_argument("--tbr-max-expansions", type=positive_cli_budget, default=None,
                      help="native ONLY; independent safety bound (native default 100000)")
+    # The two --enum-max-* options are accepted only with the TBR_enumeration policy (run_single raises
+    # ValueError otherwise), as the --tbr-* options are accepted only with the native policy. The help strings
+    # quote the defaults as numbers; run_single takes them from DEFAULT_MAX_CALL_EXPANSIONS and
+    # DEFAULT_MAX_CELL_EXPANSIONS, imported from tbr_enum.py.
+    run.add_argument("--enum-max-call-expansions", type=positive_cli_budget, default=None,
+                     help="TBR_enumeration ONLY; per-call safety bound (default 200000)")
+    run.add_argument("--enum-max-cell-expansions", type=positive_cli_budget, default=None,
+                     help="TBR_enumeration ONLY; per-cell safety bound (default 200000000)")
+    # --p and --rate-bytes-s are parsed as floats and replace failure_probability and rate_bytes_s of the loaded
+    # configuration in main(). The option name says bytes per second and its help text says bits/bytes; this file
+    # only passes the number on. The summary text failure_protocol says "exact rational p"; this file does not
+    # convert the float.
     run.add_argument("--p", type=float, help="override exact per-active-transfer-tick abort probability")
     run.add_argument("--rate-bytes-s", type=float, help="explicit bits/bytes sensitivity, e.g. 100000")
     run.add_argument("--out", required=True)
@@ -73,13 +94,29 @@ def parser():
 
 
 def run_single(cfg, records, policy_name, output, checkout_revision, checkpoint_run=None,
-               input_paths=None, *, tbr_max_nodes=None, tbr_max_expansions=None):
+               input_paths=None, *, tbr_max_nodes=None, tbr_max_expansions=None,
+               enum_max_call_expansions=None, enum_max_cell_expansions=None):
+    """Run one policy on one trace into a NEW output folder and return the summary mapping.
+
+    Order: cfg.validate(); the argument rules (the --tbr budgets only for the native policy, the enumeration
+    budgets only for TBR_enumeration, checkpoint_run exactly for GLR; ValueError otherwise); for the native
+    policy the node-count check, which raises TBRSearchIncomplete before the folder is created; then
+    output.mkdir(parents=True, exist_ok=False); config.json, traffic.json, provenance.json; for GLR the model
+    load and checks; simulate(); packets.json; events.jsonl; result.json (the summary, whose output_sha256
+    covers config.json, traffic.json, provenance.json, packets.json and events.jsonl); complete.json last.
+    An exception after the mkdir leaves a folder without complete.json; this function removes nothing.
+    Exceptions of the policy construction or of simulate() are not caught here.
+    """
     cfg.validate()
     if policy_name not in SINGLE_POLICY_NAMES:
         raise ValueError("unknown routing policy")
     native = policy_name == NATIVE_POLICY_NAME
     if not native and (tbr_max_nodes is not None or tbr_max_expansions is not None):
         raise ValueError("TBR budget options are supported only for the native single-run policy")
+    if policy_name != ENUM_POLICY_NAME and (enum_max_call_expansions is not None
+                                            or enum_max_cell_expansions is not None):
+        raise ValueError("enumeration budget options are supported only for the TBR_enumeration policy")
+    # checkpoint_run is required for GLR and refused for every other policy.
     if (policy_name == "GLR") != (checkpoint_run is not None):
         raise ValueError("--checkpoint-run is required only for GLR")
     native_reference = None
@@ -124,8 +161,12 @@ def run_single(cfg, records, policy_name, output, checkout_revision, checkpoint_
     write_json(output / "provenance.json", origin)
     setup = {"model_load_seconds": None, "contact_plan_build_seconds": None,
              "torch_threads": cfg.torch_threads, "checkpoint": None}
+    # The branches below do not include the native policy (built above) and have no final else.
     if policy_name == "GLR":
         # CPU is the ONLY supported simulator inference/timing device.
+        # torch and the model and training modules are imported only in this branch. torch.set_num_threads and
+        # torch.use_deterministic_algorithms are called here and are not set back in this function. The model
+        # load and the checks below (light speed, orbit, phase seed) run after the output folder was created.
         import torch
         from .model import predict_hops
         from .training import load_trained_model
@@ -157,6 +198,16 @@ def run_single(cfg, records, policy_name, output, checkout_revision, checkpoint_
         policy = HopOracle()
     elif policy_name == "TSR_source_dijkstra":
         policy = SourceDijkstra()
+    elif policy_name == ENUM_POLICY_NAME:
+        # T125: optional full-enumeration TBR; budgets are safety controls, not paper settings.
+        # This policy has no node-count check before the folder is created and no native_reference block; the
+        # result schema stays RESULT_SCHEMA (only the native policy gets NATIVE_RESULT_SCHEMA).
+        policy = TBR_enumeration(
+            max_call_expansions=(DEFAULT_MAX_CALL_EXPANSIONS if enum_max_call_expansions is None
+                                 else enum_max_call_expansions),
+            max_cell_expansions=(DEFAULT_MAX_CELL_EXPANSIONS if enum_max_cell_expansions is None
+                                 else enum_max_cell_expansions),
+        )
     elif policy_name == "CGR_contact_plan":
         build_start = perf_counter()
         plan = build_geometric_plan(cfg)
@@ -171,6 +222,8 @@ def run_single(cfg, records, policy_name, output, checkout_revision, checkpoint_
             handle.write(canonical_json(event) + "\n")
     summary = result["summary"]
     # Version persisted command results, NOT packet lifecycle/accounting semantics.
+    # assumptions, failure_protocol and runtime_origin are plain text labels stored in result.json; this file
+    # does not open the documents named in them.
     summary.update({"schema": NATIVE_RESULT_SCHEMA if native else RESULT_SCHEMA, "config_sha256": cfg.sha256,
                     "traffic_sha256": traffic["sha256"],
                     "declared_checkout_revision": checkout_revision, "assumptions": "SIMULATION_PROTOCOL.md; R3_FEATURES.md",
@@ -181,6 +234,9 @@ def run_single(cfg, records, policy_name, output, checkout_revision, checkpoint_
         summary["assumptions"] += "; TBR_NATIVE_SINGLE_RUN.md"
         # policy_details is the ACTUAL adapter snapshot supplied by Simulator.
         # Do not manufacture zero incomplete counters or completed-search totals.
+    # model_load_seconds is set only in the GLR branch and contact_plan_build_seconds only in the CGR_contact_plan
+    # branch; for the other policies setup leaves them None. Times are perf_counter() differences (seconds).
+    # summary["timing"] is read here as an existing entry of the mapping returned by simulate().
     summary["timing"].update(setup)
     summary["timing"]["command_seconds_before_summary_write"] = perf_counter() - started
     summary["timing"]["command_scope"] = "after output mkdir; provenance, setup/lazy imports, simulation and table/events writes; excludes startup imports/input reads/final hashes/summary writes"
@@ -192,6 +248,15 @@ def run_single(cfg, records, policy_name, output, checkout_revision, checkpoint_
 
 
 def main(argv=None):
+    """Parse the arguments and run the trace or the run subcommand.
+
+    trace: write the traffic file at --out (missing parent folders are created) and print traffic_file,
+    sha256 and packets as JSON.
+    run: --p and --rate-bytes-s replace failure_probability and rate_bytes_s of the loaded configuration; the
+    changed configuration is validated and passed to read_trace and run_single, so config.json and
+    config_sha256 in the result describe it. The summary returned by run_single is printed as JSON.
+    main has no try block and no sys.exit call; it returns None.
+    """
     args = parser().parse_args(argv)
     cfg = load_sim_config(args.config)
     if args.command == "trace":
@@ -207,11 +272,14 @@ def main(argv=None):
         changes["failure_probability"] = args.p
     if args.rate_bytes_s is not None:
         changes["rate_bytes_s"] = args.rate_bytes_s
+    # The value returned by validate() is assigned to cfg, so validate() has to return the configuration.
     cfg = replace(cfg, **changes).validate()
     records = read_trace(read_json(args.trace), cfg)
     result = run_single(cfg, records, args.policy, args.out, args.revision,
                         args.checkpoint_run, [args.config, args.trace],
-                        tbr_max_nodes=args.tbr_max_nodes, tbr_max_expansions=args.tbr_max_expansions)
+                        tbr_max_nodes=args.tbr_max_nodes, tbr_max_expansions=args.tbr_max_expansions,
+                        enum_max_call_expansions=args.enum_max_call_expansions,
+                        enum_max_cell_expansions=args.enum_max_cell_expansions)
     print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
 
 
