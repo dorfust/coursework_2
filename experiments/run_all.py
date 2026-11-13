@@ -21,6 +21,22 @@ Exit codes:
     130  interrupted by Ctrl+C (the output of the interrupted stage is partial)
 Any other exit code (for example 1 with a Python traceback) is an unexpected wrapper error.
 """
+# Status wording of revision 5 (the docstring above is the earlier wording and is unchanged). By the user's report, an earlier form
+# of this file was part of a tree that the user ran. After that run one constant of this file (DEFAULT_SUITE) and added comment
+# lines were edited, and the edited file has not been executed. The statements below about the called code (the stage processes
+# and the library) were read from this file only and were not compared with that code.
+#
+# Exit codes, as the code of this file sets them (additions to the table in the docstring above):
+#   0    also the end of --dry-run: the pre-flight passed and no stage process was started.
+#   2    ConfigError, raised by the config, stage-list, suite-semantics and command checks before the banner and the pre-flight
+#        are printed; main also returns 2 for Python older than 3.10 before anything else. It covers the case that the real
+#        argument parser rejects a built command (validate_with_real_parser).
+#   3    PreflightError: pre-flight errors, or a failed probe (--check-imports, --debug). The text 'Nothing was started.' is
+#        printed in both cases; the probe processes have already run when a probe fails, and with --debug the file run_all.log
+#        is already open at that point.
+#   4    a stage ended with a code other than 0, or its process could not be started (the code is then shown as -1);
+#        the stages after it are not started.
+#   130  KeyboardInterrupt caught in main, whenever it arrives inside run().
 import argparse
 import collections
 import contextlib
@@ -39,18 +55,38 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+# ROOT is the parent of the folder that holds this file (the file is expected at <project folder>/experiments/run_all.py);
+# src/ is looked up as ROOT/src. Relative paths: the values of --config and --output-root go through Path(...).resolve() (the
+# help text of --output-root says: relative to the current directory); the config keys suite, output_root and plan.models are
+# joined to ROOT when they are not absolute (resolve_under_root). Stage and probe processes are started with ROOT as working directory.
 ROOT = Path(__file__).resolve().parent.parent
 
 STAGES = ("plan", "train", "execute", "aggregate", "plot")
 STAGE_PREFIX = ["-m", "ssn_hops.experiments"]
 REFERENCES = ("GLR", "TBR_style_hop_oracle", "TSR_source_dijkstra", "CGR_contact_plan",
-              "TBR_bounded_exhaustive_reference")
+              "TBR_bounded_exhaustive_reference", "TBR_enumeration")
 NATIVE_REFERENCE = "TBR_bounded_exhaustive_reference"
+ENUM_REFERENCE = "TBR_enumeration"
 REVISION_PATTERN = re.compile(r"[0-9a-f]{40}")
+# Shape of the line that a stage process is expected to print when one of its jobs fails ('... exited <int>; preserve <log prefix> logs').
+# The line is written by the called code; its shape is assumed here. report_failure searches the last OUTPUT_TAIL_LINES lines of the
+# stage output, from the end, for the first line that matches and, when the prefix lies inside output_root, prints the last
+# TAIL_LINES lines of <prefix>.stderr.txt. A prefix outside output_root is not read. Without a match only a general message is printed.
 JOB_FAILED_PATTERN = re.compile(r"exited (-?[0-9]+); preserve (.+) logs\s*$")
+# Meaning of the bare numbers and patterns around here. GRACE_S: seconds to wait for a stage after Ctrl+C. TAIL_LINES: lines of a
+# failing job's stderr file that are printed. OUTPUT_TAIL_LINES: lines of stage output kept in memory to find the failing job.
+# PROBE_TIMEOUT_S: seconds after which a probe process (import check, 'ssn_hops environment') counts as failed. REVISION_PATTERN:
+# 40 lowercase hexadecimal characters; nothing else about a revision is checked here. STAGE_PREFIX: the arguments placed after
+# sys.executable in full_command. The three path-length constants have their own comment below.
 GRACE_S = 10
 TAIL_LINES = 40
 OUTPUT_TAIL_LINES = 300
+# Windows path-length rule (applied only when os.name is 'nt'; see preflight_output). It measures len(str(<output_root>/plan)).
+# LONGEST_RELATIVE_PATH: a fixed number written here, the assumed length that the longest file below the plan folder adds; this
+# file does not compute it and does not state where it comes from. MAX_PATH_CHARS: the limit used by the check. Error (exit 3)
+# when length + LONGEST_RELATIVE_PATH > MAX_PATH_CHARS (plan folder path longer than 174) and LongPathsEnabled is not confirmed
+# as true (value false, absent or unreadable); otherwise a warning when length + LONGEST_RELATIVE_PATH > WARN_PATH_CHARS (longer
+# than 115), also when long paths are enabled. summary.json and plots/ are not measured.
 LONGEST_RELATIVE_PATH = 85
 MAX_PATH_CHARS = 259
 WARN_PATH_CHARS = 200
@@ -59,14 +95,28 @@ PROBE_TIMEOUT_S = 600
 TOP_KEYS = ("revision", "suite", "output_root", "stages", "plan", "aggregate", "plot", "run")
 SECTION_DEFAULTS = {
     "plan": {"models": None, "baselines_only": False, "include_native_tbr": False,
-             "tbr_max_nodes": None, "tbr_max_expansions": None},
+             "tbr_max_nodes": None, "tbr_max_expansions": None,
+             "include_tbr_enumeration": False, "enum_max_call_expansions": None,
+             "enum_max_cell_expansions": None},
     "aggregate": {"allow_partial": False, "reference": "TBR_style_hop_oracle"},
     "plot": {"allow_partial": False},
     "run": {"progress_interval_s": 60},
 }
-DEFAULT_SUITE = "configs/suite_m1b_cgr.json"
+# Both constants below are used only when the config has no such key: normalize_config reads raw.get("suite", DEFAULT_SUITE)
+# and raw.get("output_root", DEFAULT_OUTPUT_ROOT); --output-root replaces the output value afterwards. Relative values are
+# joined to ROOT. DEFAULT_SUITE names the suite file configs/suite_paper_scope.json (sizes N = 132 to 396 in its grids).
+# Earlier revisions of this file named a different suite file here. The suite files that start.py names for --quick and for the
+# second run are configs/suite_quick.json and configs/suite_tbr_enumeration.json; start.py writes the key 'suite' into every
+# config it generates, so a run through start.py does not use this default. The default output folder is <ROOT>/outputs/run_001;
+# a plan folder that already exists there is refused by the pre-flight when the stage 'plan' is requested (nothing is deleted).
+DEFAULT_SUITE = "configs/suite_paper_scope.json"
 DEFAULT_OUTPUT_ROOT = "outputs/run_001"
 
+# check_revision tests only the form of the revision (40 lowercase hexadecimal characters; the help text below asks for double
+# quotes in YAML). The value is passed as --revision to the stages plan, train and execute (not to aggregate and plot). The code
+# cannot tell a git commit SHA from another 40-character hexadecimal string and runs no git. start.py puts a content-derived string
+# of this form into the config it generates unless --revision is given. What the called code does with the value is not described
+# here. The help text speaks of a commit SHA of the downloaded state.
 REVISION_HELP = (
     "The revision must be the 40-character lowercase hexadecimal commit SHA of the repository "
     "state you downloaded. Where to find it: open the repository page on GitHub, choose the "
@@ -96,6 +146,7 @@ class PreflightError(Exception):
         self.messages = list(messages)
 
 
+# The fields of Paths are absolute paths computed by derive_paths; models is None when plan.models is not set.
 @dataclass(frozen=True)
 class Paths:
     """Absolute paths derived from the config."""
@@ -224,6 +275,12 @@ def load_config(config_path):
     return normalize_config(raw)
 
 
+# Accepted values of the check_* functions. Flags: exactly true or false (type bool; 0, 1 and strings are refused). Budgets
+# (tbr_max_*, enum_max_*): a positive integer or null; true, false and a float such as 5.0 are refused (the type must be int).
+# Text values: a non-empty string, used with surrounding blanks removed. progress_interval_s: a finite number >= 0 that is not
+# true or false, kept as a float; 0 means no heartbeat. Unknown keys are refused at the top level and inside every section; a
+# section written as null counts as empty. Stage names are checked against STAGES and are always run in the fixed order of
+# STAGES, whatever order the list has.
 def check_text(value, label, allow_none=False):
     """Return a stripped non-empty string (or None when allowed)."""
     if value is None and allow_none:
@@ -324,6 +381,9 @@ def normalize_config(raw):
             "include_native_tbr": check_flag(plan["include_native_tbr"], "plan.include_native_tbr"),
             "tbr_max_nodes": check_budget(plan["tbr_max_nodes"], "plan.tbr_max_nodes"),
             "tbr_max_expansions": check_budget(plan["tbr_max_expansions"], "plan.tbr_max_expansions"),
+            "include_tbr_enumeration": check_flag(plan["include_tbr_enumeration"], "plan.include_tbr_enumeration"),
+            "enum_max_call_expansions": check_budget(plan["enum_max_call_expansions"], "plan.enum_max_call_expansions"),
+            "enum_max_cell_expansions": check_budget(plan["enum_max_cell_expansions"], "plan.enum_max_cell_expansions"),
         },
         "aggregate": {"allow_partial": check_flag(aggregate["allow_partial"], "aggregate.allow_partial"),
                       "reference": reference},
@@ -338,6 +398,10 @@ def stage_override(text):
     return check_stages(names, "--stages")
 
 
+# If plan.baselines_only is true, 'train' is removed from the requested stages (from the config key or from --stages alike) and
+# a NOTICE is printed; its text says that GLR is not planned and that execute needs no trained model, which is this file's
+# statement about the called code and is not checked here. ConfigError 'no stage is left to run' if nothing remains. Everything
+# after this function (semantic checks, package list, commands) uses the effective list.
 def effective_stages(cfg, requested):
     """Apply the baselines_only rule; return (stage list, printed notices)."""
     stages = list(requested)
@@ -351,6 +415,14 @@ def effective_stages(cfg, requested):
     return stages, notices
 
 
+# Rules checked here (ConfigError, exit code 2), so that they are reported before any stage starts. The docstring says they mirror
+# make_plan and aggregate; they were not compared with that code. Always: tbr_max_nodes and tbr_max_expansions need
+# include_native_tbr; enum_max_call_expansions and enum_max_cell_expansions need include_tbr_enumeration; include_tbr_enumeration
+# together with include_native_tbr is refused. Only when 'aggregate' is among the effective stages: reference GLR is refused with
+# baselines_only; reference TBR_bounded_exhaustive_reference needs include_native_tbr; reference TBR_enumeration needs
+# include_tbr_enumeration. Not checked here: whether the reference policy is planned for the chosen suite. check_suite_semantics
+# (include_native_tbr together with a suite that has the key policy_scope) runs only when the stage 'plan' is requested and the
+# suite file could be read.
 def check_semantics(cfg, stages):
     """Checks that mirror make_plan and aggregate so the user hears about them early."""
     plan = cfg["plan"]
@@ -358,12 +430,21 @@ def check_semantics(cfg, stages):
     if not plan["include_native_tbr"] and (plan["tbr_max_nodes"] is not None
                                            or plan["tbr_max_expansions"] is not None):
         raise ConfigError("plan.tbr_max_nodes / plan.tbr_max_expansions need plan.include_native_tbr: true")
+    enum_budgets = (plan["enum_max_call_expansions"], plan["enum_max_cell_expansions"])
+    if not plan["include_tbr_enumeration"] and any(value is not None for value in enum_budgets):
+        raise ConfigError("plan.enum_max_call_expansions / plan.enum_max_cell_expansions need "
+                          "plan.include_tbr_enumeration: true")
+    if plan["include_tbr_enumeration"] and plan["include_native_tbr"]:
+        raise ConfigError("plan.include_tbr_enumeration is refused together with plan.include_native_tbr "
+                          "(make_plan does not plan both)")
     if "aggregate" in stages:
         if plan["baselines_only"] and reference == "GLR":
             raise ConfigError("aggregate.reference GLR is impossible with plan.baselines_only: true "
                               "(GLR is not planned)")
         if reference == NATIVE_REFERENCE and not plan["include_native_tbr"]:
             raise ConfigError("aggregate.reference " + NATIVE_REFERENCE + " needs plan.include_native_tbr: true")
+        if reference == ENUM_REFERENCE and not plan["include_tbr_enumeration"]:
+            raise ConfigError("aggregate.reference " + ENUM_REFERENCE + " needs plan.include_tbr_enumeration: true")
 
 
 def check_suite_semantics(cfg, suite):
@@ -374,6 +455,8 @@ def check_suite_semantics(cfg, suite):
                           "(the native plan schema is frozen). Set include_native_tbr to false.")
 
 
+# The suite file is opened with encoding utf-8 and the message says 'without BOM'; the config file itself is read with utf-8-sig
+# (load_config). The claim 'like the real code does' in the docstring was not compared with the called code.
 def load_suite(path):
     """Read the suite JSON like the real code does (UTF-8, no BOM). Return (dict or None, problem or None)."""
     try:
@@ -408,6 +491,14 @@ def derive_paths(cfg):
 
 # ---------------------------------------------------------------- commands
 
+# Mapping of the config to the arguments (validate_with_real_parser passes them to the real parser of ssn_hops.experiments).
+# plan: --suite, --out <output_root>/plan, --revision; then, only when set: --models (plan.models), --baselines-only,
+# --include-native-tbr, --tbr-max-nodes, --tbr-max-expansions, --include-tbr-enumeration, --enum-max-call-expansions,
+# --enum-max-cell-expansions. A budget that is null gives no flag; what the called code then uses is decided there.
+# train and execute: --plan <output_root>/plan/plan.json --revision. aggregate: --plan, --out <output_root>/summary.json,
+# --allow-partial (when aggregate.allow_partial) and always --reference <aggregate.reference>. plot: --summary,
+# --out <output_root>/plots, --allow-partial (when plot.allow_partial). --revision is not passed to aggregate and plot.
+# All paths come from derive_paths (absolute).
 def stage_args(stage, cfg, paths):
     """Arguments after 'python -m ssn_hops.experiments' for one stage (checked by the real parser)."""
     revision = cfg["revision"]
@@ -424,6 +515,12 @@ def stage_args(stage, cfg, paths):
             argv += ["--tbr-max-nodes", str(plan["tbr_max_nodes"])]
         if plan["tbr_max_expansions"] is not None:
             argv += ["--tbr-max-expansions", str(plan["tbr_max_expansions"])]
+        if plan["include_tbr_enumeration"]:
+            argv.append("--include-tbr-enumeration")
+        if plan["enum_max_call_expansions"] is not None:
+            argv += ["--enum-max-call-expansions", str(plan["enum_max_call_expansions"])]
+        if plan["enum_max_cell_expansions"] is not None:
+            argv += ["--enum-max-cell-expansions", str(plan["enum_max_cell_expansions"])]
         return argv
     if stage in ("train", "execute"):
         return [stage, "--plan", str(paths.plan_json), "--revision", revision]
@@ -474,6 +571,11 @@ def validate_with_real_parser(argvs):
                               "the command: %s" % (stage, reason))
 
 
+# Every stage and probe process gets the same interpreter as this script (sys.executable), ROOT as working directory, stdout and
+# stderr merged into one pipe (read as UTF-8, undecodable bytes replaced) and a copy of this process's environment with these
+# changes: PYTHONPATH = ROOT/src (an existing PYTHONPATH follows after os.pathsep, so ROOT/src is listed first); PYTHONUTF8=1,
+# PYTHONIOENCODING=utf-8, PYTHONUNBUFFERED=1; with --debug also PYTHONFAULTHANDLER=1. PYTHONDONTWRITEBYTECODE is not among them;
+# sys.dont_write_bytecode is set to True in validate_with_real_parser, which affects this process only.
 def env_overrides(debug):
     """The environment variables the wrapper sets for every stage process."""
     src = str(ROOT / "src")
@@ -509,6 +611,11 @@ def long_paths_enabled():
         return None
 
 
+# Package names the effective stages need, without duplicates: 'execute' needs numpy and torch; 'train', or 'execute' without
+# baselines_only, also torch_geometric; 'plot' needs matplotlib; 'plan' and 'aggregate' need none. The table is fixed in this
+# function and is not derived from the called code. This script itself imports ssn_hops.experiments in validate_with_real_parser;
+# what that module loads is not described here. run_probes runs an import probe of these names when --check-imports or --debug
+# is given (a failed probe is exit 3), and 'python -m ssn_hops environment' only with --debug and when torch_geometric is needed.
 def required_modules(stages, baselines_only):
     """Top-level packages the requested stages import (the wrapper itself imports none)."""
     modules = []
@@ -541,6 +648,11 @@ def synced_folder(path):
     return False
 
 
+# Stage 'plan' requested: the suite file must be readable as a JSON object (load_suite); its keys core_template and
+# simulation_template must be file names of files in the folder of the suite file; plan.models, when set, must be a file;
+# <output_root>/plan must not exist. Stage 'plan' not requested: <output_root>/plan/plan.json must exist when 'train', 'execute'
+# or 'aggregate' is requested. 'aggregate': summary.json must not exist. 'plot': <output_root>/plots must not exist and, without
+# 'aggregate', summary.json must exist. Nothing else inside plan/ is checked. Every problem found here is an error (exit 3).
 def preflight_inputs(stages, paths, suite_result, errors):
     """Existing/missing files for the requested stages."""
     suite, problem = suite_result
@@ -576,6 +688,9 @@ def preflight_output(stages, paths, errors, warnings):
         errors.append("the drive or root of output_root does not exist: " + paths.out.anchor)
     if paths.out.exists() and not paths.out.is_dir():
         errors.append("output_root exists and is not a folder: " + str(paths.out))
+    # output_root may not lie inside one of these folders of the project (the reason is not stated in this file). Not refused by
+    # this loop: ROOT itself and every other folder, for example ROOT/outputs. Also refused above: a drive or root that does not
+    # exist, and an existing output_root that is not a folder.
     for name in ("src", ".venv", "configs", "driver", "docs", "experiments", ".vscode"):
         if is_inside(paths.out, ROOT / name):
             errors.append("output_root must not be inside %s" % (ROOT / name))
@@ -598,10 +713,20 @@ def preflight_packages(stages, cfg, errors):
                           % (name, sys.executable, INSTALL_HINTS[name]))
 
 
+# Errors (exit 3) come from the three helper functions preflight_inputs (files and folders that must or must not exist),
+# preflight_output (output location, Windows path length) and preflight_packages (a package that module_missing reports as
+# absent), and from Python older than 3.10. Warnings are printed and never stop the run: Python 3.15 or newer; GLR planned,
+# 'execute' requested without 'train' and plan.models not set; plan.models set although baselines_only is true;
+# include_native_tbr together with aggregate or plot; ROOT or output_root under a cloud-synchronised folder (a path part starting
+# with 'onedrive' or 'dropbox' in any letter case, or a path inside a folder named by an environment variable whose name starts
+# with ONEDRIVE; no other service is tested); a path with spaces or non-ASCII characters; a python.exe path containing
+# WindowsApps (only on Windows, letter case as written); no virtual environment (sys.prefix equals sys.base_prefix).
 def preflight(cfg, stages, paths, suite_result):
     """Collect (errors, warnings) without writing anything."""
     errors = []
     warnings = []
+    # The same version test is made in main, which returns exit code 2 before run (and so preflight) is reached; by reading, this
+    # branch is not reached when preflight is called from run. The reason for the second test is not stated in this file.
     if sys.version_info < (3, 10):
         errors.append("Python 3.10 or newer is required; this is " + platform.python_version())
     elif sys.version_info >= (3, 15):
@@ -652,6 +777,8 @@ def print_debug_header(console, paths):
         console.say("  %s=%s" % (key, value))
 
 
+# The commands are shown with subprocess.list2cmdline on every operating system; the processes are started from the argument
+# list, not from this text.
 def print_commands(console, argvs, debug):
     """Print the commands exactly as they would be run."""
     console.say("Commands in order (%d):" % len(argvs))
@@ -724,6 +851,13 @@ def count_status_files(logs_dir, stage):
     return count
 
 
+# Heartbeat: every interval seconds (config key run.progress_interval_s, default 60; with 0 no thread is started) one
+# '[heartbeat]' line is printed; run_stage uses it for the stages 'train' and 'execute' only. It counts the files
+# <output_root>/plan/logs/*.status.json by name: for 'execute' those whose name starts with 's-', for 'train' those whose name
+# does not. The total is the number of cells (execute) or the number of steps of the models that are not supplied (train), read
+# once from plan.json after the first interval and shown as '?' if it could not be read. A failed job also has a status file, so
+# the count is not a measure of success or of progress inside a job. The file naming and the layout of plan.json are assumptions
+# of this file about the called code.
 class Heartbeat:
     """Daemon thread that periodically prints how many job status files exist."""
 
@@ -761,6 +895,11 @@ class Heartbeat:
                              % (self.stage, done, total, format_elapsed(time.monotonic() - self.started)))
 
 
+# Ctrl+C: stop_process waits GRACE_S seconds for the stage to end by itself (a second Ctrl+C ends the wait at once); if the stage
+# has not ended, kill_tree runs. On Windows it runs 'taskkill /PID <pid> /T /F' (its arguments include /T and /F) and then
+# proc.kill() if the stage process is still alive; on other systems it runs only proc.kill() on the stage process itself, and
+# this code sends nothing to its children. After that up to 10 seconds are waited and a warning is printed if the end is not
+# confirmed. The messages say 'process tree' on every system.
 def kill_tree(proc, console):
     """End the stage process and its children: taskkill /T /F on Windows, proc.kill() as fallback."""
     if proc.poll() is not None:
@@ -870,6 +1009,15 @@ def report_failure(stage, code, tail, paths, console):
 
 # ---------------------------------------------------------------- main flow
 
+# Order of run: (1) read the config, check it, the stage list, the semantic rules and the suite, build the commands and pass
+# them to the real parser of ssn_hops.experiments (which imports that module into this process); a ConfigError here is exit 2
+# and no banner is printed. (2) The banner; with --debug also the debug header. (3) The pre-flight (exit 3), also with
+# --dry-run. (4) With --dry-run: print the commands and return 0; no probe and no stage runs, this script creates no file or
+# folder, and --check-imports has no effect. (5) With --debug: open <output_root>/run_all.log in append mode (UTF-8; output_root
+# and its parents are created if missing) and write the lines printed so far; a run that ends in steps (1) to (3) therefore
+# leaves no run_all.log of its own. (6) The probes, with --check-imports or --debug. (7) The stages in order, stopping at the
+# first failure (exit 4). This script creates only run_all.log itself; plan/, plan/plan.json, plan/logs, summary.json and
+# plots/ are written by the stage processes (the called code, not read here). This file contains no call that deletes anything.
 def run(args, console):
     """Whole run; returns the exit code or raises ConfigError / PreflightError / KeyboardInterrupt."""
     config_path = Path(args.config).resolve()
@@ -886,6 +1034,10 @@ def run(args, console):
     argvs = build_stage_argvs(cfg, stages, paths)
     validate_with_real_parser(argvs)
 
+    # Status lines. The first line is a fixed text, not the result of any check; for the status of the edited file see the
+    # comment after the module docstring. 'Pre-flight checks passed' means that files, folders and package presence were inspected
+    # (module_missing). The final 'All requested stages ended with child exit code 0 after HH:MM:SS' counts the stage processes
+    # only (the clock starts after the probes) and says nothing about the validity of the results.
     console.say("run_all.py (runtime status: not tested by its authors)")
     console.say("config: " + str(config_path))
     console.say("project folder: " + str(ROOT))
