@@ -8,10 +8,10 @@
 
 **Запуск.** Из корня проекта (docstring); вывод из чтения: корень скрипт вычисляет по расположению файла (`ROOT = parents[2]`, в `sys.path` добавляется `ROOT/src`), так что текущая папка на импорт не влияет, а файл должен лежать как есть, в `probes/tbr_enum/`.
 ```
-python probes\tbr_enum\check_tbr_enum.py
-python probes\tbr_enum\check_tbr_enum.py --cases 3000 --max-nodes 8 --seed 7
+.venv\Scripts\python.exe probes\tbr_enum\check_tbr_enum.py
+.venv\Scripts\python.exe probes\tbr_enum\check_tbr_enum.py --cases 3000 --max-nodes 8 --seed 7
 ```
-Какой Python: нужен тот, где есть numpy (импорт на верхнем уровне) и пакет `ssn_hops` из `src`; Python проекта 3.10–3.14 (часть A). Разумно взять интерпретатор `.venv` после первой установки (`.venv\Scripts\python.exe probes\...`). Тянет ли `import ssn_hops` пакет torch, не установлено; импорты вне `try`, при неудаче — трассировка (вывод из чтения).
+Какой Python: нужен тот, где есть numpy (импорт на верхнем уровне) и пакет `ssn_hops` из `src`; Python проекта 3.10–3.14 (часть A). Почему именно интерпретатор `.venv`, а не голый `python`: поставляемые настройки VS Code окружение не активируют (`python.terminal.activateEnvironment` = false, часть A), и голый `python` падает с `ModuleNotFoundError: No module named 'numpy'`; активация в текущем окне (`.venv\Scripts\activate.bat`) равносильна. Тянет ли `import ssn_hops` пакет torch, не установлено; импорты вне `try`, при неудаче — трассировка (вывод из чтения).
 | Опция | По умолчанию | Отказ |
 |---|---|---|
 | `--cases` | 2000 | меньше 1 — `parser.error` |
