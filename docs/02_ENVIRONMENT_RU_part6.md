@@ -37,7 +37,7 @@
 Ручной пример (3 узла, путь 0–1–2): `A = [[0,1,0],[1,0,1],[0,1,0]]`; `A·A = [[1,0,1],[0,2,0],[1,0,1]]`; после исключения соседей и диагонали остаются пары `(0,2)` и `(2,0)`; `Q = [[0,1,0.5],[1,0,1],[0.5,1,0]]`; `shortest_hops` даёт строки `[0,1,2]`, `[1,0,1]`, `[2,1,0]`, маска (при `mask_diagonal=True`) истинна всюду, кроме диагонали. Это ручной расчёт по тексту кода, не результат запуска.
 
 ### `exclusive_two_hop`
-Присваивание `exclusive_two_hop = preprocessed_structure`. Комментарий кода: «thin backward-compatible alias»; несмотря на название, возвращает комбинированную структуру `Q` (значения 1/0.5/0), а не булеву маску; «Remove after tests migrate» (тесты в экспорт не входят). В докстринге `preprocessed_structure` упомянута внутренняя метка аудита «T021 F003» (документ не входит в экспорт).
+Присваивание `exclusive_two_hop = preprocessed_structure`. Комментарий кода: «thin backward-compatible alias»; несмотря на название, возвращает комбинированную структуру `Q` (значения 1/0.5/0), а не булеву маску; «Remove after tests migrate» (тесты в экспорт не входят). В докстринге `preprocessed_structure` упомянута внутренняя метка аудита (документ не входит в экспорт).
 
 ### `branch_inputs(adjacency, device="cpu", *, ranges_km=None, model_config=None)`
 - Если `model_config is None`, берётся `ModelConfig()` (режим `TOPOLOGY_FEATURES`); вызывается `config.validate()`.
