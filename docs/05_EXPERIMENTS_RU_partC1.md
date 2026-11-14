@@ -50,7 +50,7 @@
 
 - `SUMMARY_SCHEMA = "ssn-experiment-summary-v2"`.
 - `NATIVE_SUMMARY_SCHEMA = "ssn-native-exhaustive-experiment-summary-v1"`.
-- `SCIENTIFIC_CONTRACT`: словарь из четырёх строковых ключей `path`, `commit`, `blob`, `step`. Значение `path` в коде: `"Repo_Orchestrator_2/tasks/T011-S02-native-results.md"`; такого документа нет в экспорте (не входит в экспорт). Словарь копируется в сводку нативного плана (`scientific_consumer.contract`) как справочная строка; на логику проверок не влияет (вывод из чтения).
+- `SCIENTIFIC_CONTRACT`: словарь из четырёх строковых ключей `path`, `commit`, `blob`, `step`. Значение `path` в коде указывает на внутренний документ проекта; такого документа нет в экспорте (не входит в экспорт). Словарь копируется в сводку нативного плана (`scientific_consumer.contract`) как справочная строка; на логику проверок не влияет (вывод из чтения).
 - `NATIVE_COUNTERS` — кортеж из 13 имён счётчиков нативной диагностики: `policy_calls`, `completed_searches`, `complete_route_searches`, `complete_no_route_searches`, `complete_zero_hop_searches`, `incomplete_searches`, `incomplete_max_nodes_searches`, `incomplete_max_expansions_searches`, `invalid_input_calls`, `completed_prefix_entries`, `incomplete_prefix_entries`, `total_prefix_entries`, `completed_destination_paths` (ручной расчёт: 13 имён по порядку).
 - `FIELDS` — словарь из 7 показателей и строк единиц (в коде написано):
   - `delivered_mean_delay_s`: "seconds; delivered packets only";
