@@ -55,7 +55,7 @@ Docstring: «User-invoked subprocess, argv only, no shell; exclusive logs/status
 
 - `budget_scope`: «independent safety controls; NOT author settings»; `authority`: «independently specified bounded exhaustive reference; NOT recovered author traversal/code/performance»; `route_timing_scope`: «whole choose call including adapter, core validation/search and counters; excludes context/masks; NOT pure core cost or author/Fig.5 equivalence».
 - `native_options` задаёт `aggregation_supported` и `plots_supported` = `False`, а `experiment_results.py`, `experiment_plots.py` реализуют их для нативных сводок, оставляя прежние заявления как «historical layer claims» (вывод: формулировки заморожены намеренно; части C, D).
-- Комментарий `positive_budget` ссылается на ревизию адаптера (`at245aa27`, `blob5a554294`; не входит в экспорт). Метки `T022-S01`, `T057-S01`, `R8`, `P-2` в комментариях и строках — внутренние, расшифровка не входит в экспорт.
+- Комментарий `positive_budget` ссылается на ревизию адаптера (`at245aa27`, `blob5a554294`; не входит в экспорт). Внутренние метки правок в комментариях и строках (номера задач и шагов) не расшифровываются: это не входит в экспорт.
 
 ## 8. Что не установлено чтением
 
@@ -76,4 +76,4 @@ Docstring: «User-invoked subprocess, argv only, no shell; exclusive logs/status
 
 ## 10. Документы группы 05
 
-`05_EXPERIMENTS_RU_partA1.md`, `partA2.md`, `partA3.md` — `experiments.py`; `05_EXPERIMENTS_RU_partB1.md`, `partB2.md`, `partB3.md` — `experiment_io.py` (этот набор). Планируются: часть C — `experiment_results.py`; часть D — `experiment_plots.py`. Сводного индекса пока нет.
+`05_EXPERIMENTS_RU_partA1.md`, `partA2.md`, `partA3.md` — `experiments.py`; `05_EXPERIMENTS_RU_partB1.md`, `partB2.md`, `partB3.md` — `experiment_io.py` (этот набор). Поставляются: часть C — `partC1`-`partC5` (`experiment_results.py`); часть D — `partD1`-`partD4` (`experiment_plots.py`). Сводный индекс — `05_EXPERIMENTS_RU.md`, дополнение — `05_EXPERIMENTS_RU_partE.md`.
