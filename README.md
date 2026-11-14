@@ -84,7 +84,7 @@ start_quick.py, start_tbr_enumeration.py, start_dry_run.py   [НОВ]
 run.cmd                        [НОВ] запуск из cmd
 ssn-hops.code-workspace        [НОВ] необязателен
 pyproject.toml, .gitignore     [=3б]
-config.yaml, config.example.json   [=3б] называют СТАРЫЙ набор; изменение планируется
+config.yaml, config.example.json   [ПРАВ] называют набор configs/suite_paper_scope.json
 .vscode/                       launch.json, settings.json заменены [ПРАВ]; extensions.json [=3б]
 configs/                       suite_paper_scope.json, suite_quick.json,
                                suite_tbr_enumeration.json [НОВ];
@@ -132,7 +132,7 @@ docs/                          см. раздел 12
 
 ## 11. Ручной запуск (старый путь)
 
-Ручной путь - прежний способ редакции 3, `docs/09_WINDOWS_RU.md`: создать `.venv`, `pip install -e .`, задать `--revision` из 40 строчных hex-знаков, затем `python experiments\run_all.py --config config.yaml` (флаги `--dry-run`, `--debug`, `--output-root`). `config.yaml` и `config.example.json` пока называют СТАРЫЙ набор; изменение планируется, но не сделано. `DEFAULT_SUITE` в `run_all.py` называет новый набор `configs/suite_paper_scope.json`. Для нового объёма задайте набор явно: `configs/suite_paper_scope.json`. Команды отдельных стадий: `python -m ssn_hops.experiments plan --suite configs/suite_paper_scope.json --out <новый абсолютный каталог> --revision <40 hex>` (флаги `--include-native-tbr`, `--include-tbr-enumeration`, `--enum-max-call-expansions N`, `--enum-max-cell-expansions N`), затем `train`, `execute`, `aggregate`, `plot`. Планы редакции 3b нужно составить заново: хеши исходников изменились. Команды не запускались.
+Ручной путь - прежний способ редакции 3, `docs/09_WINDOWS_RU.md`: создать `.venv`, `pip install -e .`, задать `--revision` из 40 строчных hex-знаков, затем `python experiments\run_all.py --config config.yaml` (флаги `--dry-run`, `--debug`, `--output-root`). `config.yaml` и `config.example.json` называют набор `configs/suite_paper_scope.json`; `DEFAULT_SUITE` в `run_all.py` называет тот же набор. Для нового объёма задайте набор явно: `configs/suite_paper_scope.json`. Команды отдельных стадий: `python -m ssn_hops.experiments plan --suite configs/suite_paper_scope.json --out <новый абсолютный каталог> --revision <40 hex>` (флаги `--include-native-tbr`, `--include-tbr-enumeration`, `--enum-max-call-expansions N`, `--enum-max-cell-expansions N`), затем `train`, `execute`, `aggregate`, `plot`. Планы редакции 3b нужно составить заново: хеши исходников изменились. Команды не запускались.
 
 ## 12. Карта документации (`docs/`)
 
