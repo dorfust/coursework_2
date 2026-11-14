@@ -75,7 +75,7 @@
 
 ## 8. Связи с другими модулями
 - Импортирует: `config.py` (`content_hash`, `integer`), `sim_config.py` (`ticks`); стандартные `dataclasses`, `fractions`, `hashlib`, `random`. Сторонних зависимостей нет.
-- Импортируется: `simulator.py` (`edge_tick_failure`, `validate_records`; прочитано); `simulate.py`, `experiment_results.py` (`read_trace`), `experiments.py` (ленивый импорт `make_trace`, `trace_document`); `driver/traces.py` (ленивый импорт); по чтению строк `import` этих файлов.
+- Импортируется: `simulator.py` (`edge_tick_failure`, `validate_records`; прочитано); `simulate.py`, `experiment_results.py` (`read_trace`), `experiments.py` (ленивый импорт `make_trace`, `trace_document`); `driver/traces.py` (ленивый импорт; каталога `driver/` нет в поставке); по чтению строк `import` этих файлов.
 
 ## 9. Побочные эффекты и случайность
 Файлов нет; глобальное состояние не изменяется. Случайность: (1) `random.Random(traffic_seed)` в `make_trace`; (2) хэш-испытания в `edge_tick_failure` (без генератора). Других источников случайности в модуле нет.
