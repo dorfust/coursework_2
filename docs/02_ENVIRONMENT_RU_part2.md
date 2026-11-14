@@ -97,7 +97,7 @@
 - «Defaults are reconstruction assumptions» — все значения по умолчанию.
 - «independent reconstruction, NOT the recovered author H0» — раскладка H0.
 - «OPTIONAL EXTENSION, not in the paper» — режим задержки; поле `delay_*` «inert in topology-only modes».
-- В докстринге и комментариях встречаются метки внутренних задач (`T022-S01`, `T022`) и идентификатор arXiv `2108.08523v1`; документы, на которые указывают метки, не входят в экспорт.
+- В докстринге и комментариях встречаются метки внутренних задач и идентификатор arXiv `2108.08523v1`; документы, на которые указывают метки, не входят в экспорт.
 
 ## 15. Что не установлено чтением (config.py)
 - Как `data.py`, `training.py`, `model.py` используют `step_s`, `start_s`, `beta`, `device`, `threads`, `deterministic`.
