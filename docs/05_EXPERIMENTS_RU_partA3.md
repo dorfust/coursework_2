@@ -50,7 +50,7 @@
 - «RECONSTRUCTION sweeps; never authors' results» (`parser`); «Runtime status: not_run» (docstring).
 - Комментарий о наборе входов: по умолчанию «topology-only (paper-faithful)», канал задержки — «optional extension» (над `FEATURE_CONTRACT`).
 - Нативные пределы: «NOT recovered author settings» (`make_plan`), «independent safety bound» (справка `--tbr-max-*`).
-- Комментарии кода содержат внутренние метки правок вида `T022-S01`, `T057-S01`, `R8, P-1`; их расшифровка не входит в экспорт.
+- Комментарии кода содержат внутренние метки правок (номера задач и шагов); их расшифровка не входит в экспорт.
 
 ## 13. Что не установлено чтением
 - Содержимое документов, названных в `CONTRACT`/`FEATURE_CONTRACT` (не входит в экспорт).
@@ -70,5 +70,5 @@
 7. Пути шаблонов `suite_path.parent / ...` не проверяются на выход за папку (входные данные пользователя).
 
 ## 15. Документы группы 05
-- `05_EXPERIMENTS_RU_partA1.md`, `partA2.md`, `partA3.md` — `experiments.py` (этот набор; сводного индекса пока нет).
-- Планируются: часть B — `experiment_io.py`; часть C — `experiment_results.py`; часть D — `experiment_plots.py`.
+- `05_EXPERIMENTS_RU_partA1.md`, `partA2.md`, `partA3.md` — `experiments.py` (этот набор; сводный индекс — `05_EXPERIMENTS_RU.md`, дополнение — `05_EXPERIMENTS_RU_partE.md`).
+- Поставляются: часть B — `partB1`-`partB3` (`experiment_io.py`); часть C — `partC1`-`partC5` (`experiment_results.py`); часть D — `partD1`-`partD4` (`experiment_plots.py`).
