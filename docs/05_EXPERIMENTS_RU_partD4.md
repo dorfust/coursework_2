@@ -78,4 +78,4 @@
 6. Уточнение к `05_EXPERIMENTS_RU_partD2.md`, раздел 5.3, последний пункт: правило 28 сравнивает с нулём целые знаменатели `delivered`, `route_calls`, `generated`; суммы `delay_sum_s` и `route_seconds` в правиле не участвуют. Формулировка в том пункте неточна, верна эта.
 Однозначной логической ошибки чтением не установлено.
 
-Документы группы 05: индекс `05_EXPERIMENTS_RU.md`; `partA1`-`partA3` (`experiments.py`); `partB1`-`partB3` (`experiment_io.py`); `partC1`-`partC5` (`experiment_results.py`); `partD1`-`partD4` (`experiment_plots.py`; этот набор).
+Документы группы 05: индекс `05_EXPERIMENTS_RU.md`; `partA1`-`partA3` (`experiments.py`); `partB1`-`partB3` (`experiment_io.py`); `partC1`-`partC5` (`experiment_results.py`); `partD1`-`partD4` (`experiment_plots.py`; этот набор); `partE` (обзор редакции 5).
