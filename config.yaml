@@ -54,8 +54,9 @@ plan:
   # baselines_only - true: не планировать GLR (остаются TBR, TSR, CGR). Тогда стадия train пропускается
   # (скрипт печатает пояснение), а execute не требует torch_geometric.
   baselines_only: false
-  # include_native_tbr - собственный ограниченный перебор TBR. С поставляемым набором (в нём есть policy_scope)
-  # код отказывается его планировать: оставьте false.
+  # include_native_tbr - собственный ограниченный перебор TBR. В поставляемом наборе ключа policy_scope нет;
+  # у неё граница по умолчанию - max_nodes = 12 (src/ssn_hops/tbr_reference.py), а набор идёт с N от 132 до 396:
+  # на таких размерах поиск отказывается как неполный (reason max_nodes). Оставьте false.
   include_native_tbr: false
   # tbr_max_nodes, tbr_max_expansions - целые положительные границы; только вместе с include_native_tbr: true.
   tbr_max_nodes: null
