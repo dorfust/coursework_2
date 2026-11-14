@@ -43,7 +43,7 @@
 
 ### 3.7 Что в коде названо допущением или реконструкцией
 Строки кода: «independent safety controls; NOT author settings»; «independently specified bounded exhaustive reference; NOT recovered author traversal/code/performance»; `route_timing_scope`: «NOT pure core cost or author/Fig.5 equivalence»; `failure_protocol`: «ssn-edge-tick-v1; exact rational p; unordered edge/tick; not persistent outages»; `runtime_origin`: «only created when user executes; no precomputed paper results».
-Строки с названиями документов, которые не входят в экспорт: `"SIMULATION_PROTOCOL.md; R3_FEATURES.md"`, `"; TBR_NATIVE_SINGLE_RUN.md"`; словари `CONTRACT`, `FEATURE_CONTRACT`, `NATIVE_CONTRACT` (пути вида `Repo_Orchestrator_2/tasks/….md`, хеши коммитов и блобов, метки шагов); `core_source_commit`, `adapter_source_commit`.
+Строки с названиями документов, которые не входят в экспорт: `"SIMULATION_PROTOCOL.md; R3_FEATURES.md"`, `"; TBR_NATIVE_SINGLE_RUN.md"`; словари `CONTRACT`, `FEATURE_CONTRACT`, `NATIVE_CONTRACT` (служебные пути, хеши коммитов и блобов, метки шагов); `core_source_commit`, `adapter_source_commit`.
 
 ### 3.8 Что не установлено чтением
 Кто вызывает `run_single`; точность предсказаний GLR; допускают ли операции `GCNConv` режим `use_deterministic_algorithms(True)` на CPU; содержимое документов не из экспорта; работоспособность (ничего не запускалось).
