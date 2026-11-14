@@ -86,7 +86,7 @@ python -c "import ssn_hops"
 python -m ssn_hops environment
 ```
 
-1. `dir` должен показать `src`, `experiments`, `configs`, `driver`, `docs`, `config.yaml`, `config.example.json`, `pyproject.toml`.
+1. `dir` должен показать `src`, `experiments`, `configs`, `docs`, `config.yaml`, `config.example.json`, `pyproject.toml`. Папки `driver` в поставке нет: драйвер удалён (по документации: состав папки репозитория; см. `docs/ERRATA_RU_part6_part2.md`, запись `E6-ERR-2`).
 2. `python -c "import ssn_hops"`: ожидается отсутствие вывода (вывод из чтения: `__init__.py` содержит docstring и `__version__`). Он находит пакет через редактируемую установку или через `PYTHONPATH`; в обычном окне cmd без установки задайте `set PYTHONPATH=%CD%\src` (в терминале VS Code это делает `settings.json`).
 3. `python -m ssn_hops environment`: ожидается JSON со сведениями о среде (ключи `python`, `platform`, `packages`, `torch_cuda_build`, `cuda_available`, `device_count`, `torch_threads`; в коде написано, `docs/08`, раздел 4). Команде нужны `torch` и `torch_geometric`. У `pytest` в `packages` ожидается `"not-installed"` (дополнение `test` убрано).
 4. Сухой прогон `run_all.py` — раздел 10.1, ПОСЛЕ правки `config.yaml` (раздел 9). С файлом как он поставляется сухой прогон должен остановиться с `CONFIG ERROR` о ревизии (раздел 13): так задумано.
