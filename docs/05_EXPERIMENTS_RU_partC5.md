@@ -60,7 +60,7 @@
 - Импортирует `config`, `sim_config`, `traffic`, `experiment_io` (вверху) и отложенно `experiments` (`check_model`).
 - Вызывается из `experiments.py`, `main`, команда `aggregate`: `from .experiment_results import aggregate_plan` (отложенный импорт), после `load_plan`. Другие импортёры в прочитанных файлах не найдены; остальные модули не просматривались.
 - Читает артефакты, записанные `simulate.py` (`run`, `trace`; см. `docs/04`), `experiments.py` (`execute_suite`, `preflight_models`) и `job` из `experiment_io.py`.
-- Выходной файл — вход `experiment_plots.py` (описание: часть D, `05_EXPERIMENTS_RU_partD1.md`, запланирована).
+- Выходной файл — вход `experiment_plots.py` (описание: части D, `05_EXPERIMENTS_RU_partD1.md`-`partD4.md`).
 
 ## Побочные эффекты
 
