@@ -1,6 +1,6 @@
 # 05. Эксперименты: `experiment_io.py` (часть B1: назначение, форматы, хеши, служебные функции)
 
-Описан один модуль: `src/ssn_hops/experiment_io.py` (19407 байт). Части: `partB1` (разделы 1-2, функции 3.1-3.10), `partB2` (проверка плана, 3.11-3.16), `partB3` (3.17-3.18 и разделы 4-10). Вызывающий модуль `experiments.py` — `05_EXPERIMENTS_RU_partA1.md`-`partA3.md`; `experiment_results.py`, `experiment_plots.py` — планируемые части C, D.
+Описан один модуль: `src/ssn_hops/experiment_io.py` (19407 байт). Части: `partB1` (разделы 1-2, функции 3.1-3.10), `partB2` (проверка плана, 3.11-3.16), `partB3` (3.17-3.18 и разделы 4-10). Вызывающий модуль `experiments.py` — `05_EXPERIMENTS_RU_partA1.md`-`partA3.md`; `experiment_results.py`, `experiment_plots.py` — части C и D: `05_EXPERIMENTS_RU_partC1.md`-`partC5.md`, `05_EXPERIMENTS_RU_partD1.md`-`partD4.md`.
 
 Метки: «в коде написано» — содержимое кода; «вывод» — вывод из чтения; «ручной расчёт» — арифметика с показом. Ничего не запускалось: утверждений о работоспособности и результатах нет.
 
@@ -55,7 +55,7 @@
 
 ### 3.1. Константа `NATIVE_CONTRACT`
 
-`NATIVE_CONTRACT = {"path", "commit", "blob", "step"}` — строки, называющие документ вне экспорта (не входит в экспорт; `step = "R3/A09/S02B2A"`; `commit`, `blob` — 40-символьные hex-строки; содержание документа не установлено). Копия входит в `contract` словаря `native_options` и тем самым в хеш нативного плана (вывод).
+`NATIVE_CONTRACT = {"path", "commit", "blob", "step"}` — строки, называющие документ вне экспорта (не входит в экспорт; поле `step` содержит внутренние номера задач и шагов; `commit`, `blob` — 40-символьные hex-строки; содержание документа не установлено). Копия входит в `contract` словаря `native_options` и тем самым в хеш нативного плана (вывод).
 
 ### 3.2. `positive_budget(value, name)`
 
@@ -71,7 +71,7 @@
 
 ### 3.4. `single_run_native_reference(native)`
 
-Читает только `native["max_nodes"]`, `native["max_expansions"]` (иначе `KeyError`). Возвращает 13 ключей: `policy_identity`, `search_identity`, `objective`, `max_nodes`, `max_expansions`, `budget_scope`, `scope`, `node_preflight_scope`, `route_timing_scope`, `authority`, `contract` (иные `path`/`commit`/`blob`, `step = "R3/A08/S02B1B"`), `core_source_commit`, `adapter_source_commit`. Docstring: «Exact frozen single-run declaration, NOT relabeled as aggregated evidence.» Вывод: эталон для сверки `result.json` и `provenance.json` нативной ячейки (3.17).
+Читает только `native["max_nodes"]`, `native["max_expansions"]` (иначе `KeyError`). Возвращает 13 ключей: `policy_identity`, `search_identity`, `objective`, `max_nodes`, `max_expansions`, `budget_scope`, `scope`, `node_preflight_scope`, `route_timing_scope`, `authority`, `contract` (иные `path`/`commit`/`blob`, в `step` — внутренние номера задач и шагов), `core_source_commit`, `adapter_source_commit`. Docstring: «Exact frozen single-run declaration, NOT relabeled as aggregated evidence.» Вывод: эталон для сверки `result.json` и `provenance.json` нативной ячейки (3.17).
 
 ### 3.5. `read(path)`
 
