@@ -1,6 +1,6 @@
 # experiment_results.py: описание, часть C1 из пяти
 
-Файл: `src/ssn_hops/experiment_results.py` (39072 байт). Описание разбито на файлы `05_EXPERIMENTS_RU_partC1.md` ... `partC5.md`. Состав:
+Файл: `src/ssn_hops/experiment_results.py`. Описание разбито на файлы `05_EXPERIMENTS_RU_partC1.md` ... `partC5.md`. Состав:
 
 - C1 (этот файл): назначение, входы и выходы, константы модуля, вспомогательные функции `close`, `count`, `describe`.
 - C2: `verify_accounting`, `scientific_plan_guard`, `verify_native_counters`.
