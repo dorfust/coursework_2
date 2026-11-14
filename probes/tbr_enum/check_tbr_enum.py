@@ -1,8 +1,11 @@
 """User-run check of TBR_enumeration against tbr_reference (NOT executed by its author).
 
-Run from the project root (the folder that contains src/):
-    python probes/tbr_enum/check_tbr_enum.py
-    python probes/tbr_enum/check_tbr_enum.py --cases 3000 --max-nodes 8 --seed 7
+Run from the project root (the folder that contains src/) with the project interpreter.
+This file imports numpy at module level and the shipped .vscode settings do not activate
+the environment, so a bare `python` fails with
+ModuleNotFoundError: No module named 'numpy'. Examples:
+    .venv\\Scripts\\python.exe probes\\tbr_enum\\check_tbr_enum.py
+    .venv\\Scripts\\python.exe probes\\tbr_enum\\check_tbr_enum.py --cases 3000 --max-nodes 8 --seed 7
 It reads nothing, writes nothing and uses no network. Exit code 0 = PASS, 1 = FAIL.
 The hand fixtures below were derived by hand (PLAN_CHECK_T125.md); a fixture failure may
 also be an error of that hand trace, so read the printed values before concluding.
