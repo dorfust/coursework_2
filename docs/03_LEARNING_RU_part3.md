@@ -27,7 +27,7 @@ Docstring: «Masked MSE + beta * unsquared Euclidean norm of all trainable param
 ### Функции и константы
 - `SOURCES` — словарь с ключами `contract`, `feature_contract`, `T001`, `T007` (пути к внутренним документам исходного проекта и hex-идентификаторы ревизий; эти документы не входят в экспорт, значения здесь не воспроизводятся), `paper` = «arXiv:2108.08523v1 (2021-08-19)», `implementation` = «independent reconstruction, not original code or published-performance equality».
 - `file_sha256(path)` → hex sha256 файла, чтение блоками по `1024*1024` байт.
-- `source_hashes()` → `{имя_файла: sha256}` для всех `*.py` в каталоге, где лежит `provenance.py` (отсортировано по пути). Вывод: в экспорте это 24 файла пакета `ssn_hops`; их число кодом не проверяется.
+- `source_hashes()` → `{имя_файла: sha256}` для всех `*.py` в каталоге, где лежит `provenance.py` (отсортировано по пути). Вывод: в экспорте это 25 файлов пакета `ssn_hops`; их число кодом не проверяется.
 - `environment()` → `python` (`sys.version`), `platform`, `packages` (версии `numpy`, `torch`, `torch-geometric`, `ssn-hop-reconstruction`, `pytest` через `importlib.metadata`; при отсутствии — `"not-installed"`), `torch_cuda_build`, `cuda_available`, `device_count`, `torch_threads`.
 - `provenance(revision)` → `declared_checkout_revision`, `revision_is_user_supplied: True`, `sources`, `source_sha256`, `environment`. Ревизия пользователем только объявляется и не сверяется с репозиторием.
 - `write_json(path, value)`: файл открывается в режиме `"x"` (перезапись запрещена, комментарий: защита свидетельств), `indent=2`, `sort_keys=True`, `allow_nan=False`, в конце перевод строки. `read_json(path)` читает UTF-8.
@@ -63,7 +63,7 @@ Docstring: «Masked MSE + beta * unsquared Euclidean norm of all trainable param
 - Устройство обучения задаётся только `train.device` в конфигурации; у `train` нет аргумента `--device`. `evaluate` берёт конфигурацию из чекпойнта, а не из аргумента.
 - Из-за импортов верхнего уровня (`training` → `model` → `torch_geometric`) даже команда `environment` требует импортируемых `torch` и `torch_geometric`.
 - `generate` печатает весь манифест целиком (включая траектории).
-- Команды расчёта политик маршрутизации в `cli.py` отсутствуют; соответствующие модули — в планируемых `docs/04_SIMULATION_POLICIES_RU.md` и `docs/06_DRIVER_CONFIGS_RU.md`.
+- Команды расчёта политик маршрутизации в `cli.py` отсутствуют; соответствующие модули — в `docs/04_SIMULATION_POLICIES_RU.md`.
 - Шаблоны вызова (не запускались), при `PYTHONPATH`, указывающем на каталог `src`: `python -m ssn_hops environment`; `python -m ssn_hops generate --config <config.json> --out <новый_каталог> --revision <40 hex>`; `python -m ssn_hops train --config <config.json> --data <каталог_данных> --out <новый_каталог> --revision <40 hex>`; `python -m ssn_hops evaluate --run <каталог_прогона> --data <каталог_данных> --out <файл.json> --revision <40 hex>`.
 
 ### Связи
