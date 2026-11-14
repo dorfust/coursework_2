@@ -56,7 +56,7 @@
 | Наборы данных | сиды `DataConfig`: 101-108, 201-202, 301-302 (по `docs/02`); порядок `train_seeds + val_seeds + test_seeds` в `simulate.run_single` (вывод: это сиды обучения, проверки, теста) | `config.py` |
 | Обучение | `TrainConfig.seed = 17` (применение в `training.py` — `docs/03`) | — |
 
-Тройки сидов серии: `[401,501,601]` … `[405,505,605]` (`suite_m1b_cgr.json`, `seed_tuples`); у сценария они заменяют `(phase_seed, traffic_seed, failure_seed)`. Политики детерминированы: выбор минимума с разрешением равенства по номеру узла (`HopOracle`, `GLR`), Дейкстра (`TSR`, `CGR`). В `simulate.run_single` для GLR вызывается `torch.set_num_threads(cfg.torch_threads)` (умолчание 1) и `torch.use_deterministic_algorithms(True)`.
+Тройки сидов серии: `[401,501,601]` … `[405,505,605]` (`suite_m1b_cgr.json` — нет в поставке, `seed_tuples`); у сценария они заменяют `(phase_seed, traffic_seed, failure_seed)`. Политики детерминированы: выбор минимума с разрешением равенства по номеру узла (`HopOracle`, `GLR`), Дейкстра (`TSR`, `CGR`). В `simulate.run_single` для GLR вызывается `torch.set_num_threads(cfg.torch_threads)` (умолчание 1) и `torch.use_deterministic_algorithms(True)`.
 
 ## 11. Четыре политики и опциональная пятая (по `policies.py`, `tbr_policy.py`)
 
@@ -77,16 +77,16 @@
 | Строка / файл | Определена в | Связывает |
 |---|---|---|
 | `ssn-simulation-config-v1` | `sim_config.SimulationConfig.schema` | конфигурация симуляции: `simulate`, план, сводка |
-| `ssn-traffic-v1` | `traffic.trace_document` | трасса: `trace`, `run`, `execute`, `driver.traces` |
+| `ssn-traffic-v1` | `traffic.trace_document` | трасса: `trace`, `run`, `execute`, `driver.traces` — нет в поставке |
 | `ssn-packet-table-v1` | `simulate.run_single` | `packets.json` ячейки |
 | `ssn-simulation-result-v1` | `simulator.Simulator.result` | значение до записи; в `run_single` заменяется |
 | `ssn-simulation-result-v2` | `simulate.RESULT_SCHEMA` | `result.json` ячейки; читает `experiment_results` |
 | `ssn-native-exhaustive-simulation-result-v1` | `simulate.NATIVE_RESULT_SCHEMA` | результат нативной политики |
-| `ssn-experiment-suite-v1` | `experiments.SUITE_SCHEMA` | `configs/suite_m1b_cgr.json` |
+| `ssn-experiment-suite-v1` | `experiments.SUITE_SCHEMA` | `configs/suite_m1b_cgr.json` — нет в поставке |
 | `ssn-experiment-plan-v2`, `ssn-native-exhaustive-experiment-plan-v1` | `experiment_io` | `plan.json` |
 | `ssn-experiment-summary-v2`, `ssn-native-exhaustive-experiment-summary-v1` | `experiment_results` | сводка `aggregate` → `plot` |
-| `ssn-m1-slices-v1` | в файле `configs/slices_m1b_cgr.json` | расписание срезов для `selector` |
-| `ssn-m1-ledger-v1` | `ledger.LEDGER_SCHEMA` | строки журнала времени |
+| `ssn-m1-slices-v1` | в файле `configs/slices_m1b_cgr.json` — нет в поставке | расписание срезов для `selector` |
+| `ssn-m1-ledger-v1` | `ledger.LEDGER_SCHEMA` — нет в поставке | строки журнала времени |
 
 Привязки по хешам: `plan.json["sha256"]` = SHA-256 канонического JSON тела; `body["source_sha256"]` = SHA-256 каждого `*.py` рядом с `experiment_io.py`; `body["file_sha256"]` — хеши конфигураций; `result.json` хранит `config_sha256`, `traffic_sha256`, `output_sha256` (пять файлов), `complete.json` — `result_sha256`; `provenance.json` — `declared_checkout_revision` (`revision_is_user_supplied: True`) и `source_sha256`. Файлы корня плана: `plan.json`, `configs/`, `traces/`, `runs/`, `logs/`, `training/`, `training_started.json`, `training_complete.json`, `model_preflight.json`, `execution_started.json`, `execution_complete.json`; журнал `--ledger` лежит где укажет пользователь.
 
